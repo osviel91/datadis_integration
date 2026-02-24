@@ -1,0 +1,6 @@
+{
+  "name": "Datadis",
+  "country": "ES",
+  "domains": ["sensor", "button"],
+  "render_readme": true
+}

@@ -1,0 +1,59 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Datadis",
+        "description": "Connect to Datadis and configure one CUPS.",
+        "data": {
+          "username": "Username",
+          "password": "Password",
+          "cups": "CUPS",
+          "distributor_code": "Distributor code",
+          "update_interval_minutes": "Update interval (minutes)",
+          "query_days": "Query window (days)"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid authentication",
+      "cannot_connect": "Cannot connect",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "This CUPS is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Datadis options",
+        "data": {
+          "distributor_code": "Distributor code",
+          "update_interval_minutes": "Update interval (minutes)",
+          "query_days": "Query window (days)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "button": {
+      "refresh_now": {
+        "name": "Refresh now"
+      }
+    },
+    "sensor": {
+      "monthly_consumption": {
+        "name": "Monthly Consumption"
+      },
+      "yesterday_consumption": {
+        "name": "Yesterday Consumption"
+      },
+      "latest_hour_consumption": {
+        "name": "Latest Hour Consumption"
+      },
+      "monthly_peak_power": {
+        "name": "Monthly Peak Power"
+      }
+    }
+  }
+}
