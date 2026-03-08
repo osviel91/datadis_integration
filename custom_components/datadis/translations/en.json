@@ -40,6 +40,11 @@
     }
   },
   "entity": {
+    "binary_sensor": {
+      "rate_limit_reached": {
+        "name": "Rate Limit Reached"
+      }
+    },
     "button": {
       "refresh_now": {
         "name": "Refresh now"

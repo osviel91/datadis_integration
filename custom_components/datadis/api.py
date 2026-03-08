@@ -22,6 +22,9 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+REQUEST_TIMEOUT_SECONDS = 12
+MAX_FALLBACK_ATTEMPTS = 16
+SUPPLY_TIMEOUT_SECONDS = 35
 
 
 class DatadisApiError(Exception):
@@ -68,6 +71,11 @@ class DatadisApiClient:
         self._access_token: str | None = None
         self._supply_resolved = False
 
+    @property
+    def distributor_code(self) -> str:
+        """Return current distributor code."""
+        return self._distributor_code
+
     async def async_validate_access(self) -> None:
         """Validate credentials and CUPS by requesting available supplies."""
         await self._async_resolve_supply()
@@ -81,7 +89,7 @@ class DatadisApiClient:
         end_date: datetime,
     ) -> list[dict[str, Any]]:
         """Return consumption data for a date range."""
-        await self._async_resolve_supply()
+        await self._async_try_resolve_supply()
         return await self._async_request_with_param_fallbacks(
             CONSUMPTION_URL,
             start_date,
@@ -94,7 +102,7 @@ class DatadisApiClient:
         end_date: datetime,
     ) -> list[dict[str, Any]]:
         """Return max power data for a date range."""
-        await self._async_resolve_supply()
+        await self._async_try_resolve_supply()
         return await self._async_request_with_param_fallbacks(
             MAX_POWER_URL,
             start_date,
@@ -114,25 +122,36 @@ class DatadisApiClient:
         )
         last_err: DatadisApiError | None = None
 
-        for idx, params in enumerate(attempts, start=1):
-            try:
-                data = await self._async_request(url, params, method="get")
-                if isinstance(data, list):
-                    return [row for row in data if isinstance(row, dict)]
-                if isinstance(data, dict):
-                    for key in ("data", "items", "result"):
-                        candidate = data.get(key)
-                        if isinstance(candidate, list):
-                            return [row for row in candidate if isinstance(row, dict)]
-                return []
-            except DatadisRateLimitError as err:
-                last_err = err
+        methods = ("get", "post")
+        for method in methods:
+            # POST fallback is only useful after a GET 500/400 path.
+            if method == "post" and (last_err is None or last_err.status not in {400, 500}):
                 break
-            except DatadisApiError as err:
-                last_err = err
-                if err.status not in {400, 500} or idx == len(attempts):
+            for idx, params in enumerate(attempts[:MAX_FALLBACK_ATTEMPTS], start=1):
+                try:
+                    data = await self._async_request(url, params, method=method)
+                    if isinstance(data, list):
+                        return [row for row in data if isinstance(row, dict)]
+                    if isinstance(data, dict):
+                        for key in ("data", "items", "result"):
+                            candidate = data.get(key)
+                            if isinstance(candidate, list):
+                                return [row for row in candidate if isinstance(row, dict)]
+                    return []
+                except DatadisRateLimitError as err:
+                    last_err = err
                     break
-                _LOGGER.debug("Datadis %s fallback %s/%s", url, idx + 1, len(attempts))
+                except DatadisApiError as err:
+                    last_err = err
+                    if err.status not in {400, 500} or idx == len(attempts):
+                        break
+                    _LOGGER.debug(
+                        "Datadis %s %s fallback %s/%s",
+                        url,
+                        method.upper(),
+                        idx + 1,
+                        len(attempts),
+                    )
 
         if last_err is not None:
             raise last_err
@@ -148,7 +167,9 @@ class DatadisApiClient:
         }
 
         try:
-            async with self._session.post(TOKEN_URL, data=payload, timeout=30) as response:
+            async with self._session.post(
+                TOKEN_URL, data=payload, timeout=REQUEST_TIMEOUT_SECONDS
+            ) as response:
                 if response.status == 401:
                     raise DatadisAuthError("Authentication failed")
                 if response.status >= 400:
@@ -186,59 +207,81 @@ class DatadisApiClient:
         if self._supply_resolved:
             return
 
-        supply_params: dict[str, Any] = {}
-        if self._distributor_code:
-            supply_params["distributor_code"] = self._distributor_code
+        last_error: DatadisApiError | None = None
+        for distributor_candidate in _distributor_candidates(self._distributor_code):
+            supply_params: dict[str, Any] = {}
+            if distributor_candidate:
+                supply_params["distributor_code"] = distributor_candidate
 
-        supplies_data = await self._async_request(
-            SUPPLIES_URL,
-            supply_params,
-            method="get",
-        )
-        supplies = _extract_supply_rows(supplies_data)
-        if supplies is None:
-            # Do not hard fail when Datadis returns an unexpected wrapper.
-            self._supply_resolved = True
-            return
+            try:
+                supplies_data = await self._async_request(
+                    SUPPLIES_URL,
+                    supply_params,
+                    method="get",
+                    timeout_seconds=SUPPLY_TIMEOUT_SECONDS,
+                )
+            except DatadisApiError as err:
+                last_error = err
+                continue
 
-        matched_row = next(
-            (
-                row
-                for row in supplies
-                if str(row.get("cups", "")).strip() == self._cups
-                or str(row.get("CUPS", "")).strip() == self._cups
-            ),
-            None,
-        )
-        if not matched_row:
-            raise DatadisApiError(
-                "CUPS not found for this account (or distributor code is incorrect)"
+            supplies = _extract_supply_rows(supplies_data)
+            if supplies is None:
+                continue
+
+            matched_row = next(
+                (
+                    row
+                    for row in supplies
+                    if str(row.get("cups", "")).strip() == self._cups
+                    or str(row.get("CUPS", "")).strip() == self._cups
+                ),
+                None,
             )
+            if not matched_row:
+                continue
 
-        if not self._distributor_code:
             code = (
                 matched_row.get("distributor_code")
                 or matched_row.get("distributorCode")
                 or matched_row.get("distributor")
+                or distributor_candidate
             )
             if code:
                 self._distributor_code = str(code).strip()
+            self._supply_resolved = True
+            return
 
+        if last_error is not None:
+            raise last_error
+        # Do not hard fail when Datadis returns unexpected wrappers/empty rows.
         self._supply_resolved = True
+
+    async def _async_try_resolve_supply(self) -> None:
+        """Best-effort supply resolution; do not block data fetch on timeout/errors."""
+        try:
+            await self._async_resolve_supply()
+        except DatadisApiError as err:
+            _LOGGER.debug("Skipping supply resolution due to error: %s", err)
+            # Keep operating with configured values/fallbacks.
 
     async def _async_request(
         self,
         url: str,
         body: dict[str, Any],
         method: str = "post",
+        timeout_seconds: int = REQUEST_TIMEOUT_SECONDS,
     ) -> Any:
         token = await self._async_get_token()
-        response_data = await self._async_call(url, body, token, method=method)
+        response_data = await self._async_call(
+            url, body, token, method=method, timeout_seconds=timeout_seconds
+        )
 
         if isinstance(response_data, dict) and response_data.get("cod"):  # API error
             if str(response_data.get("cod")) in {"401", "403"}:
                 token = await self._async_get_token(force_refresh=True)
-                response_data = await self._async_call(url, body, token, method=method)
+                response_data = await self._async_call(
+                    url, body, token, method=method, timeout_seconds=timeout_seconds
+                )
             else:
                 message = response_data.get("message") or response_data
                 raise DatadisApiError(f"Datadis API error: {message}")
@@ -246,7 +289,12 @@ class DatadisApiClient:
         return response_data
 
     async def _async_call(
-        self, url: str, body: dict[str, Any], token: str, method: str = "post"
+        self,
+        url: str,
+        body: dict[str, Any],
+        token: str,
+        method: str = "post",
+        timeout_seconds: int = REQUEST_TIMEOUT_SECONDS,
     ) -> Any:
         headers = {
             "Authorization": f"Bearer {token}",
@@ -259,7 +307,11 @@ class DatadisApiClient:
 
         try:
             async with request(
-                url, params=params, data=data, headers=headers, timeout=30
+                url,
+                params=params,
+                data=data,
+                headers=headers,
+                timeout=timeout_seconds,
             ) as response:
                 if response.status == 401:
                     _LOGGER.debug("Datadis token expired for %s", url)
@@ -316,6 +368,8 @@ def _build_query_param_attempts(
     """Build fallback request variants for Datadis query endpoints."""
     base_variants = []
     # Datadis commonly expects month-formatted ranges (YYYY/MM).
+    # Some backends break when measurement/point params are present,
+    # so we also generate minimal variants without them.
     for candidate_point_type in (point_type, POINT_TYPE_SUPPLY_POINT, "1"):
         base_variants.extend(
             [
@@ -346,14 +400,62 @@ def _build_query_param_attempts(
             ]
         )
 
+    # Minimal variants
+    base_variants.extend(
+        [
+            {
+                "start_date": start_date.strftime("%Y/%m"),
+                "end_date": end_date.strftime("%Y/%m"),
+            },
+            {
+                "startDate": start_date.strftime("%Y/%m"),
+                "endDate": end_date.strftime("%Y/%m"),
+            },
+            {
+                "start_date": start_date.strftime("%Y/%m/%d"),
+                "end_date": end_date.strftime("%Y/%m/%d"),
+            },
+            {
+                "startDate": start_date.strftime("%Y/%m/%d"),
+                "endDate": end_date.strftime("%Y/%m/%d"),
+            },
+        ]
+    )
+
+    distributor_candidates = _distributor_candidates(distributor_code)
+
     attempts: list[dict[str, Any]] = []
+    seen: set[tuple[tuple[str, str], ...]] = set()
     for variant in base_variants:
-        snake = {"cups": cups, **variant}
-        camel = {"cups": cups, **variant}
-        if distributor_code:
-            snake["distributor_code"] = distributor_code
-            camel["distributorCode"] = distributor_code
-        attempts.append(snake)
-        attempts.append(camel)
+        for distributor_candidate in distributor_candidates:
+            snake = {"cups": cups, **variant}
+            camel = {"cups": cups, **variant}
+            if distributor_candidate:
+                snake["distributor_code"] = distributor_candidate
+                camel["distributorCode"] = distributor_candidate
+            for candidate in (snake, camel):
+                key = tuple(sorted((k, str(v)) for k, v in candidate.items()))
+                if key in seen:
+                    continue
+                seen.add(key)
+                attempts.append(candidate)
 
     return attempts
+
+
+def _distributor_candidates(code: str) -> list[str]:
+    """Return distributor fallback values."""
+    normalized = (code or "").strip()
+    candidates: list[str] = []
+    for value in (
+        normalized,
+        normalized.lower(),
+        normalized.upper(),
+        "i-de",
+        "I-DE",
+        "",
+    ):
+        if value in candidates:
+            continue
+        candidates.append(value)
+    return candidates

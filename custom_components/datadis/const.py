@@ -1,7 +1,7 @@
 """Constants for Datadis integration."""
 
 DOMAIN = "datadis"
-PLATFORMS = ["sensor", "button", "number", "text"]
+PLATFORMS = ["sensor", "button", "number", "text", "binary_sensor"]
 
 CONF_USERNAME = "username"
 CONF_PASSWORD = "password"
@@ -19,7 +19,7 @@ DEFAULT_RATE_LIMIT_COOLDOWN_HOURS = 24
 DEFAULT_POINT_TYPE = "5"
 
 MIN_UPDATE_INTERVAL_MINUTES = 15
-MAX_UPDATE_INTERVAL_MINUTES = 240
+MAX_UPDATE_INTERVAL_MINUTES = 1440
 MIN_QUERY_DAYS = 3
 MAX_QUERY_DAYS = 90
 MIN_RATE_LIMIT_COOLDOWN_HOURS = 1

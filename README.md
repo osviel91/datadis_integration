@@ -10,6 +10,7 @@ It lets you connect one or more CUPS and expose consumption/power sensors in Hom
 - Multiple CUPS support (one config entry per CUPS)
 - Datadis API fallback handling for common parameter/date variants
 - `Refresh now` control button
+- `Rate Limit Reached` binary sensor for dashboard visibility
 - Editable controls in device `Controls` section:
   - `Update Interval` (minutes)
   - `Query Window` (days)
@@ -32,6 +33,7 @@ Per configured CUPS:
   - `monthly_peak_power` (`kW`)
   - `last_successful_update` (timestamp)
   - `next_allowed_query_at` (timestamp)
+  - `rate_limit_reached` (binary)
 - Controls
   - `button.refresh_now`
   - `number.update_interval_minutes`

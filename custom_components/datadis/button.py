@@ -42,4 +42,4 @@ class DatadisRefreshButton(CoordinatorEntity[DatadisCoordinator], ButtonEntity):
 
     async def async_press(self) -> None:
         """Handle the button press."""
-        await self.coordinator.async_request_refresh()
+        await self.coordinator.async_force_refresh()

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
@@ -25,6 +28,8 @@ from .const import (
     PLATFORMS,
 )
 from .coordinator import DatadisCoordinator
+
+_LOGGER = logging.getLogger(__name__)
 
 
 DatadisConfigEntry = ConfigEntry[DatadisCoordinator]
@@ -91,7 +96,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: DatadisConfigEntry) -> b
     )
 
     try:
-        await coordinator.async_config_entry_first_refresh()
+        async with asyncio.timeout(20):
+            await coordinator.async_config_entry_first_refresh()
+    except TimeoutError:
+        _LOGGER.warning(
+            "Datadis first refresh timed out during setup; continuing and refreshing in background"
+        )
+        hass.async_create_task(coordinator.async_refresh())
     except DatadisApiError as err:
         raise ConfigEntryNotReady(f"Datadis API not ready: {err}") from err
 

@@ -120,15 +120,33 @@ class DatadisSensor(CoordinatorEntity[DatadisCoordinator], SensorEntity):
 
     @property
     def native_value(self) -> float | datetime | None:
+        if self.coordinator.data is None:
+            return None
         return self.entity_description.value_fn(self.coordinator.data)
 
     @property
     def extra_state_attributes(self) -> dict[str, str] | None:
-        if self.entity_description.key != "latest_hour_consumption":
+        if self.coordinator.data is None:
             return None
 
-        measured_at = self.coordinator.data.latest_measurement_at
-        if measured_at is None:
-            return None
+        if self.entity_description.key == "latest_hour_consumption":
+            measured_at = self.coordinator.data.latest_measurement_at
+            if measured_at is None:
+                return None
+            return {"measurement_at": measured_at.isoformat()}
 
-        return {"measurement_at": measured_at.isoformat()}
+        if self.entity_description.key == "monthly_consumption":
+            attrs: dict[str, str] = {
+                "is_fallback_period": str(
+                    self.coordinator.data.monthly_consumption_is_fallback
+                ).lower()
+            }
+            if self.coordinator.data.data_period_start is not None:
+                attrs["data_period_start"] = (
+                    self.coordinator.data.data_period_start.isoformat()
+                )
+            if self.coordinator.data.data_period_end is not None:
+                attrs["data_period_end"] = self.coordinator.data.data_period_end.isoformat()
+            return attrs
+
+        return None
