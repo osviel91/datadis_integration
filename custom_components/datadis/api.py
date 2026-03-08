@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 import json
 import logging
 from typing import Any
 
+import aiohttp
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
@@ -145,17 +147,22 @@ class DatadisApiClient:
             "password": self._credentials.password,
         }
 
-        async with self._session.post(TOKEN_URL, data=payload, timeout=30) as response:
-            if response.status == 401:
-                raise DatadisAuthError("Authentication failed")
-            if response.status >= 400:
-                text = await response.text()
-                raise DatadisApiError(
-                    f"Token request failed ({response.status}): {text}",
-                    status=response.status,
-                )
+        try:
+            async with self._session.post(TOKEN_URL, data=payload, timeout=30) as response:
+                if response.status == 401:
+                    raise DatadisAuthError("Authentication failed")
+                if response.status >= 400:
+                    text = await response.text()
+                    raise DatadisApiError(
+                        f"Token request failed ({response.status}): {text}",
+                        status=response.status,
+                    )
 
-            data = await _async_read_json_or_text(response)
+                data = await _async_read_json_or_text(response)
+        except asyncio.TimeoutError as err:
+            raise DatadisApiError("Token request timed out") from err
+        except aiohttp.ClientError as err:
+            raise DatadisApiError(f"Token request connection error: {err}") from err
 
         access_token = None
         if isinstance(data, dict):
@@ -250,25 +257,30 @@ class DatadisApiClient:
         params = body if method.lower() == "get" else None
         data = body if method.lower() != "get" else None
 
-        async with request(
-            url, params=params, data=data, headers=headers, timeout=30
-        ) as response:
-            if response.status == 401:
-                _LOGGER.debug("Datadis token expired for %s", url)
-                return {"cod": "401", "message": "Unauthorized"}
-            if response.status == 429:
-                text = await response.text()
-                raise DatadisRateLimitError(
-                    f"Request failed ({response.status}): {text}",
-                    status=response.status,
-                )
-            if response.status >= 400:
-                text = await response.text()
-                raise DatadisApiError(
-                    f"Request failed ({response.status}): {text}",
-                    status=response.status,
-                )
-            return await _async_read_json_or_text(response)
+        try:
+            async with request(
+                url, params=params, data=data, headers=headers, timeout=30
+            ) as response:
+                if response.status == 401:
+                    _LOGGER.debug("Datadis token expired for %s", url)
+                    return {"cod": "401", "message": "Unauthorized"}
+                if response.status == 429:
+                    text = await response.text()
+                    raise DatadisRateLimitError(
+                        f"Request failed ({response.status}): {text}",
+                        status=response.status,
+                    )
+                if response.status >= 400:
+                    text = await response.text()
+                    raise DatadisApiError(
+                        f"Request failed ({response.status}): {text}",
+                        status=response.status,
+                    )
+                return await _async_read_json_or_text(response)
+        except asyncio.TimeoutError as err:
+            raise DatadisApiError(f"Request timed out: {url}") from err
+        except aiohttp.ClientError as err:
+            raise DatadisApiError(f"Request connection error: {err}") from err
 
 
 async def _async_read_json_or_text(response) -> Any:
