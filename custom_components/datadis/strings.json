@@ -9,8 +9,10 @@
           "password": "Password",
           "cups": "CUPS",
           "distributor_code": "Distributor code",
+          "point_type": "Point type (1 or 5)",
           "update_interval_minutes": "Update interval (minutes)",
-          "query_days": "Query window (days)"
+          "query_days": "Query window (days)",
+          "rate_limit_cooldown_hours": "Rate limit cooldown (hours)"
         }
       }
     },
@@ -29,8 +31,10 @@
         "title": "Datadis options",
         "data": {
           "distributor_code": "Distributor code",
+          "point_type": "Point type (1 or 5)",
           "update_interval_minutes": "Update interval (minutes)",
-          "query_days": "Query window (days)"
+          "query_days": "Query window (days)",
+          "rate_limit_cooldown_hours": "Rate limit cooldown (hours)"
         }
       }
     }
@@ -47,6 +51,20 @@
       },
       "query_days": {
         "name": "Query Window"
+      },
+      "rate_limit_cooldown_hours": {
+        "name": "Rate Limit Cooldown"
+      }
+    },
+    "text": {
+      "cups": {
+        "name": "CUPS"
+      },
+      "distributor_code": {
+        "name": "Distributor Code"
+      },
+      "point_type": {
+        "name": "Point Type"
       }
     },
     "sensor": {
@@ -61,6 +79,12 @@
       },
       "monthly_peak_power": {
         "name": "Monthly Peak Power"
+      },
+      "last_successful_update": {
+        "name": "Last Successful Update"
+      },
+      "next_allowed_query_at": {
+        "name": "Next Allowed Query"
       }
     }
   }

@@ -32,6 +32,8 @@ class DatadisData:
     latest_hour_consumption_kwh: float | None
     latest_measurement_at: datetime | None
     monthly_peak_power_kw: float | None
+    last_successful_update: datetime | None
+    next_allowed_query_at: datetime | None
 
 
 class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
@@ -44,6 +46,7 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
         name: str,
         update_interval_minutes: int = DEFAULT_UPDATE_INTERVAL_MINUTES,
         query_days: int = DEFAULT_QUERY_DAYS,
+        rate_limit_cooldown_hours: int = 24,
     ) -> None:
         super().__init__(
             hass,
@@ -53,10 +56,12 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
         )
         self.client = client
         self.query_days = query_days
+        self.rate_limit_cooldown_hours = rate_limit_cooldown_hours
         self._last_consumption_rows: list[dict[str, Any]] = []
         self._last_max_power_rows: list[dict[str, Any]] = []
         self._next_consumption_try: datetime | None = None
         self._next_max_power_try: datetime | None = None
+        self._last_successful_update: datetime | None = None
 
     async def _async_update_data(self) -> DatadisData:
         now = dt_util.now()
@@ -77,11 +82,14 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
                 )
                 self._last_consumption_rows = consumption_rows
                 self._next_consumption_try = None
+                self._last_successful_update = now
             except DatadisAuthError as err:
                 raise ConfigEntryAuthFailed from err
             except DatadisRateLimitError as err:
                 _LOGGER.debug("Datadis consumption rate-limited: %s", err)
-                self._next_consumption_try = now + timedelta(hours=24)
+                self._next_consumption_try = now + timedelta(
+                    hours=self.rate_limit_cooldown_hours
+                )
                 consumption_rows = self._last_consumption_rows
             except DatadisApiError as err:
                 _LOGGER.warning("Datadis consumption fetch failed: %s", err)
@@ -97,23 +105,37 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
                 )
                 self._last_max_power_rows = max_power_rows
                 self._next_max_power_try = None
+                self._last_successful_update = now
             except DatadisAuthError as err:
                 raise ConfigEntryAuthFailed from err
             except DatadisRateLimitError as err:
                 _LOGGER.debug("Datadis max power rate-limited: %s", err)
-                self._next_max_power_try = now + timedelta(hours=24)
+                self._next_max_power_try = now + timedelta(
+                    hours=self.rate_limit_cooldown_hours
+                )
                 max_power_rows = self._last_max_power_rows
             except DatadisApiError as err:
                 _LOGGER.debug("Datadis max power fetch failed: %s", err)
                 max_power_rows = self._last_max_power_rows
 
-        return self._build_data(now, consumption_rows, max_power_rows)
+        next_allowed_query_at = _earliest_datetime(
+            self._next_consumption_try, self._next_max_power_try
+        )
+        return self._build_data(
+            now,
+            consumption_rows,
+            max_power_rows,
+            self._last_successful_update,
+            next_allowed_query_at,
+        )
 
     def _build_data(
         self,
         now: datetime,
         consumption_rows: list[dict[str, Any]],
         max_power_rows: list[dict[str, Any]],
+        last_successful_update: datetime | None,
+        next_allowed_query_at: datetime | None,
     ) -> DatadisData:
         monthly = 0.0
         month_start_date = now.replace(
@@ -175,6 +197,8 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
             else None,
             latest_measurement_at=latest_time,
             monthly_peak_power_kw=round(peak_power, 3) if peak_power is not None else None,
+            last_successful_update=last_successful_update,
+            next_allowed_query_at=next_allowed_query_at,
         )
 
 
@@ -209,3 +233,8 @@ def _parse_datetime(value: Any) -> datetime | None:
             continue
 
     return None
+
+
+def _earliest_datetime(*values: datetime | None) -> datetime | None:
+    valid = [value for value in values if value is not None]
+    return min(valid) if valid else None

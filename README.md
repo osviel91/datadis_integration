@@ -1,69 +1,97 @@
 # Datadis for Home Assistant
 
-Custom Home Assistant integration to read electricity data from the Datadis private API for one or more CUPS points.
+Unofficial Home Assistant custom integration for Datadis private API.
+
+It lets you connect one or more CUPS and expose consumption/power sensors in Home Assistant, with editable controls directly in the device page.
 
 ## Features
 
-- Config flow from Home Assistant UI
-- Per-entry CUPS configuration
-- Auto polling with configurable interval
-- Configurable query window (days)
-- Manual `Refresh now` button entity
-- Editable controls on the device page for interval and query window
-- Tolerant API request fallbacks for Datadis format differences
+- UI setup flow (no YAML)
+- Multiple CUPS support (one config entry per CUPS)
+- Datadis API fallback handling for common parameter/date variants
+- `Refresh now` control button
+- Editable controls in device `Controls` section:
+  - `Update Interval` (minutes)
+  - `Query Window` (days)
+  - `Rate Limit Cooldown` (hours)
+  - `CUPS`
+  - `Distributor Code`
+  - `Point Type` (`1` or `5`)
+- Diagnostic sensors:
+  - `Last Successful Update`
+  - `Next Allowed Query`
 
 ## Entities
 
-Per configured CUPS, this integration creates:
+Per configured CUPS:
 
-- `sensor.monthly_consumption` (`kWh`)
-- `sensor.yesterday_consumption` (`kWh`)
-- `sensor.latest_hour_consumption` (`kWh`)
-- `sensor.monthly_peak_power` (`kW`)
-- `button.refresh_now`
-- `number.update_interval_minutes`
-- `number.query_days`
+- Sensors
+  - `monthly_consumption` (`kWh`)
+  - `yesterday_consumption` (`kWh`)
+  - `latest_hour_consumption` (`kWh`)
+  - `monthly_peak_power` (`kW`)
+  - `last_successful_update` (timestamp)
+  - `next_allowed_query_at` (timestamp)
+- Controls
+  - `button.refresh_now`
+  - `number.update_interval_minutes`
+  - `number.query_days`
+  - `number.rate_limit_cooldown_hours`
+  - `text.cups`
+  - `text.distributor_code`
+  - `text.point_type`
 
-## Installation (manual)
+Credentials are intentionally not exposed as entities for security reasons. Update them from integration reconfiguration instead of device controls.
 
-1. Copy `custom_components/datadis` into your Home Assistant config folder under `custom_components`.
+## Install with HACS
+
+1. Open HACS in Home Assistant.
+2. Go to `Integrations`.
+3. Click menu (top-right) -> `Custom repositories`.
+4. Add this repository URL and set category to `Integration`.
+5. Search for `Datadis` in HACS and install it.
+6. Restart Home Assistant.
+7. Go to `Settings -> Devices & Services -> Add Integration`.
+8. Add `Datadis` and complete setup.
+
+## Manual installation
+
+1. Copy `custom_components/datadis` into your HA config folder under `custom_components`.
 2. Restart Home Assistant.
-3. Go to `Settings -> Devices & Services -> Add Integration`.
-4. Search `Datadis`.
-5. Fill:
-   - `username`
-   - `password`
-   - `cups`
-   - `distributor_code` (optional)
-   - `update_interval_minutes`
-   - `query_days`
+3. Add integration from `Settings -> Devices & Services`.
 
-## Configuration options
+## Initial configuration fields
 
-After setup, open the integration `Configure` menu:
+- `username`
+- `password`
+- `cups`
+- `distributor_code` (optional)
+- `point_type` (`1` or `5`)
+- `update_interval_minutes`
+- `query_days`
+- `rate_limit_cooldown_hours`
 
-- `update_interval_minutes`: automatic polling frequency.
-- `query_days`: number of past days requested from Datadis on each refresh.
-- `distributor_code`: optional, can help in some distributor scenarios.
+## Datadis limits and behavior
 
-## Force refresh anytime
+Datadis may return `429 Consulta ya realizada en las últimas 24 horas`.
 
-Use one of these methods:
+This integration handles it by:
 
-- Open the Datadis device and press `Refresh now`.
-- In the same device Controls area, edit `Update Interval` or `Query Window` and the integration will reload with the new values.
-- Call Home Assistant service `homeassistant.update_entity` on one Datadis sensor entity.
+- Keeping previous valid values instead of clearing sensors
+- Exposing `next_allowed_query_at` for visibility
+- Respecting configurable cooldown before retry
 
-## Notes about Datadis API behavior
+Recommended defaults:
 
-Datadis can return strict validation errors depending on distributor and request shape. This integration includes fallback parameter/date formats and keeps partial data working when one endpoint fails.
+- `Update Interval`: `1440` minutes
+- `Rate Limit Cooldown`: `24` hours
 
-## Repository structure
+## Development
 
-- `custom_components/datadis/`: integration code
-- `hacs.json`: HACS metadata
-- `LICENSE`: project license
+```bash
+python3 -m compileall custom_components/datadis
+```
 
 ## Disclaimer
 
-This project is an unofficial integration and is not affiliated with Datadis.
+This project is not affiliated with Datadis.

@@ -9,6 +9,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import DatadisConfigEntry
 from .coordinator import DatadisCoordinator
+from .const import CONF_CUPS
 
 
 async def async_setup_entry(
@@ -34,7 +35,7 @@ class DatadisRefreshButton(CoordinatorEntity[DatadisCoordinator], ButtonEntity):
         self._attr_unique_id = f"{entry.entry_id}_refresh_now"
         self._attr_device_info = {
             "identifiers": {("datadis", entry.entry_id)},
-            "name": f"Datadis {entry.data['cups']}",
+            "name": f"Datadis {entry.options.get(CONF_CUPS, entry.data['cups'])}",
             "manufacturer": "Datadis",
             "model": "Private API",
         }

@@ -55,12 +55,14 @@ class DatadisApiClient:
         credentials: DatadisCredentials,
         cups: str,
         distributor_code: str,
+        point_type: str,
     ) -> None:
         self._hass = hass
         self._session = async_get_clientsession(hass)
         self._credentials = credentials
         self._cups = cups
         self._distributor_code = distributor_code
+        self._point_type = point_type
         self._access_token: str | None = None
         self._supply_resolved = False
 
@@ -106,6 +108,7 @@ class DatadisApiClient:
             distributor_code=self._distributor_code,
             start_date=start_date,
             end_date=end_date,
+            point_type=self._point_type,
         )
         last_err: DatadisApiError | None = None
 
@@ -122,9 +125,7 @@ class DatadisApiClient:
                 return []
             except DatadisRateLimitError as err:
                 last_err = err
-                if idx == len(attempts):
-                    break
-                continue
+                break
             except DatadisApiError as err:
                 last_err = err
                 if err.status not in {400, 500} or idx == len(attempts):
@@ -298,36 +299,37 @@ def _build_query_param_attempts(
     distributor_code: str,
     start_date: datetime,
     end_date: datetime,
+    point_type: str,
 ) -> list[dict[str, Any]]:
     """Build fallback request variants for Datadis query endpoints."""
     base_variants = []
     # Datadis commonly expects month-formatted ranges (YYYY/MM).
-    for point_type in (POINT_TYPE_SUPPLY_POINT, "1"):
+    for candidate_point_type in (point_type, POINT_TYPE_SUPPLY_POINT, "1"):
         base_variants.extend(
             [
                 {
                     "start_date": start_date.strftime("%Y/%m"),
                     "end_date": end_date.strftime("%Y/%m"),
                     "measurement_type": MEASUREMENT_TYPE_ELECTRICITY,
-                    "point_type": point_type,
+                    "point_type": candidate_point_type,
                 },
                 {
                     "startDate": start_date.strftime("%Y/%m"),
                     "endDate": end_date.strftime("%Y/%m"),
                     "measurementType": MEASUREMENT_TYPE_ELECTRICITY,
-                    "pointType": point_type,
+                    "pointType": candidate_point_type,
                 },
                 {
                     "start_date": start_date.strftime("%Y/%m/%d"),
                     "end_date": end_date.strftime("%Y/%m/%d"),
                     "measurement_type": MEASUREMENT_TYPE_ELECTRICITY,
-                    "point_type": point_type,
+                    "point_type": candidate_point_type,
                 },
                 {
                     "startDate": start_date.strftime("%Y/%m/%d"),
                     "endDate": end_date.strftime("%Y/%m/%d"),
                     "measurementType": MEASUREMENT_TYPE_ELECTRICITY,
-                    "pointType": point_type,
+                    "pointType": candidate_point_type,
                 },
             ]
         )

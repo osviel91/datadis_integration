@@ -12,13 +12,18 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from . import DatadisConfigEntry
 from .coordinator import DatadisCoordinator
 from .const import (
+    CONF_CUPS,
     CONF_QUERY_DAYS,
+    CONF_RATE_LIMIT_COOLDOWN_HOURS,
     CONF_UPDATE_INTERVAL,
     DEFAULT_QUERY_DAYS,
+    DEFAULT_RATE_LIMIT_COOLDOWN_HOURS,
     DEFAULT_UPDATE_INTERVAL_MINUTES,
     MAX_QUERY_DAYS,
+    MAX_RATE_LIMIT_COOLDOWN_HOURS,
     MAX_UPDATE_INTERVAL_MINUTES,
     MIN_QUERY_DAYS,
+    MIN_RATE_LIMIT_COOLDOWN_HOURS,
     MIN_UPDATE_INTERVAL_MINUTES,
 )
 
@@ -58,6 +63,19 @@ NUMBERS: tuple[DatadisNumberDescription, ...] = (
         mode="box",
         icon="mdi:calendar-range",
     ),
+    DatadisNumberDescription(
+        key="rate_limit_cooldown_hours",
+        name="Rate Limit Cooldown",
+        translation_key="rate_limit_cooldown_hours",
+        option_key=CONF_RATE_LIMIT_COOLDOWN_HOURS,
+        default_value=DEFAULT_RATE_LIMIT_COOLDOWN_HOURS,
+        native_min_value=MIN_RATE_LIMIT_COOLDOWN_HOURS,
+        native_max_value=MAX_RATE_LIMIT_COOLDOWN_HOURS,
+        native_step=1,
+        native_unit_of_measurement=UnitOfTime.HOURS,
+        mode="box",
+        icon="mdi:timer-sand",
+    ),
 )
 
 
@@ -92,7 +110,7 @@ class DatadisOptionNumber(CoordinatorEntity[DatadisCoordinator], NumberEntity):
         self._attr_unique_id = f"{entry.entry_id}_{description.key}"
         self._attr_device_info = {
             "identifiers": {("datadis", entry.entry_id)},
-            "name": f"Datadis {entry.data['cups']}",
+            "name": f"Datadis {entry.options.get(CONF_CUPS, entry.data['cups'])}",
             "manufacturer": "Datadis",
             "model": "Private API",
         }

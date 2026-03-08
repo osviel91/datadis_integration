@@ -13,15 +13,24 @@ from homeassistant.helpers.selector import NumberSelector, NumberSelectorConfig
 
 from .api import DatadisApiClient, DatadisApiError, DatadisAuthError, DatadisCredentials
 from .const import (
+    CONF_CUPS,
     CONF_DISTRIBUTOR_CODE,
+    CONF_PASSWORD,
+    CONF_POINT_TYPE,
     CONF_QUERY_DAYS,
+    CONF_RATE_LIMIT_COOLDOWN_HOURS,
     CONF_UPDATE_INTERVAL,
+    CONF_USERNAME,
+    DEFAULT_POINT_TYPE,
     DEFAULT_DISTRIBUTOR_CODE,
     DEFAULT_QUERY_DAYS,
+    DEFAULT_RATE_LIMIT_COOLDOWN_HOURS,
     DEFAULT_UPDATE_INTERVAL_MINUTES,
     DOMAIN,
+    MAX_RATE_LIMIT_COOLDOWN_HOURS,
     MAX_QUERY_DAYS,
     MAX_UPDATE_INTERVAL_MINUTES,
+    MIN_RATE_LIMIT_COOLDOWN_HOURS,
     MIN_QUERY_DAYS,
     MIN_UPDATE_INTERVAL_MINUTES,
 )
@@ -34,6 +43,7 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Required("password"): str,
         vol.Required("cups"): str,
         vol.Optional(CONF_DISTRIBUTOR_CODE, default=DEFAULT_DISTRIBUTOR_CODE): str,
+        vol.Optional(CONF_POINT_TYPE, default=DEFAULT_POINT_TYPE): vol.In(["1", "5"]),
         vol.Optional(
             CONF_UPDATE_INTERVAL, default=DEFAULT_UPDATE_INTERVAL_MINUTES
         ): NumberSelector(
@@ -52,6 +62,17 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
                 mode="box",
             )
         ),
+        vol.Optional(
+            CONF_RATE_LIMIT_COOLDOWN_HOURS,
+            default=DEFAULT_RATE_LIMIT_COOLDOWN_HOURS,
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=MIN_RATE_LIMIT_COOLDOWN_HOURS,
+                max=MAX_RATE_LIMIT_COOLDOWN_HOURS,
+                step=1,
+                mode="box",
+            )
+        ),
     }
 )
 
@@ -59,15 +80,16 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
 async def _validate_input(hass: HomeAssistant, data: dict[str, Any]) -> None:
     """Validate user data by calling Datadis contract endpoint."""
     credentials = DatadisCredentials(
-        username=data["username"].strip(),
-        password=data["password"],
+        username=data[CONF_USERNAME].strip(),
+        password=data[CONF_PASSWORD],
     )
 
     client = DatadisApiClient(
         hass=hass,
         credentials=credentials,
-        cups=data["cups"].strip(),
+        cups=data[CONF_CUPS].strip(),
         distributor_code=data[CONF_DISTRIBUTOR_CODE].strip(),
+        point_type=data[CONF_POINT_TYPE],
     )
     await client.async_validate_access()
 
@@ -83,14 +105,18 @@ class DatadisConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             normalized_input = {
                 **user_input,
-                "username": user_input["username"].strip(),
-                "cups": user_input["cups"].strip(),
+                CONF_USERNAME: user_input[CONF_USERNAME].strip(),
+                CONF_CUPS: user_input[CONF_CUPS].strip(),
                 CONF_DISTRIBUTOR_CODE: user_input[CONF_DISTRIBUTOR_CODE].strip(),
+                CONF_POINT_TYPE: str(user_input[CONF_POINT_TYPE]).strip(),
                 CONF_UPDATE_INTERVAL: int(user_input[CONF_UPDATE_INTERVAL]),
                 CONF_QUERY_DAYS: int(user_input[CONF_QUERY_DAYS]),
+                CONF_RATE_LIMIT_COOLDOWN_HOURS: int(
+                    user_input[CONF_RATE_LIMIT_COOLDOWN_HOURS]
+                ),
             }
 
-            await self.async_set_unique_id(normalized_input["cups"])
+            await self.async_set_unique_id(normalized_input[CONF_CUPS])
             self._abort_if_unique_id_configured()
 
             try:
@@ -104,7 +130,7 @@ class DatadisConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "unknown"
             else:
                 return self.async_create_entry(
-                    title=f"Datadis {normalized_input['cups']}",
+                    title=f"Datadis {normalized_input[CONF_CUPS]}",
                     data=normalized_input,
                 )
 
@@ -130,7 +156,11 @@ class DatadisOptionsFlow(OptionsFlow):
                 data={
                     CONF_UPDATE_INTERVAL: int(user_input[CONF_UPDATE_INTERVAL]),
                     CONF_DISTRIBUTOR_CODE: user_input[CONF_DISTRIBUTOR_CODE].strip(),
+                    CONF_POINT_TYPE: str(user_input[CONF_POINT_TYPE]).strip(),
                     CONF_QUERY_DAYS: int(user_input[CONF_QUERY_DAYS]),
+                    CONF_RATE_LIMIT_COOLDOWN_HOURS: int(
+                        user_input[CONF_RATE_LIMIT_COOLDOWN_HOURS]
+                    ),
                 },
             )
 
@@ -145,6 +175,13 @@ class DatadisOptionsFlow(OptionsFlow):
                         ),
                     ),
                 ): str,
+                vol.Optional(
+                    CONF_POINT_TYPE,
+                    default=self._config_entry.options.get(
+                        CONF_POINT_TYPE,
+                        self._config_entry.data.get(CONF_POINT_TYPE, DEFAULT_POINT_TYPE),
+                    ),
+                ): vol.In(["1", "5"]),
                 vol.Optional(
                     CONF_UPDATE_INTERVAL,
                     default=self._config_entry.options.get(
@@ -173,6 +210,23 @@ class DatadisOptionsFlow(OptionsFlow):
                     NumberSelectorConfig(
                         min=MIN_QUERY_DAYS,
                         max=MAX_QUERY_DAYS,
+                        step=1,
+                        mode="box",
+                    )
+                ),
+                vol.Optional(
+                    CONF_RATE_LIMIT_COOLDOWN_HOURS,
+                    default=self._config_entry.options.get(
+                        CONF_RATE_LIMIT_COOLDOWN_HOURS,
+                        self._config_entry.data.get(
+                            CONF_RATE_LIMIT_COOLDOWN_HOURS,
+                            DEFAULT_RATE_LIMIT_COOLDOWN_HOURS,
+                        ),
+                    ),
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=MIN_RATE_LIMIT_COOLDOWN_HOURS,
+                        max=MAX_RATE_LIMIT_COOLDOWN_HOURS,
                         step=1,
                         mode="box",
                     )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Callable
 
 from homeassistant.components.sensor import (
@@ -19,13 +20,14 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import DatadisConfigEntry
 from .coordinator import DatadisCoordinator, DatadisData
+from .const import CONF_CUPS
 
 
 @dataclass(frozen=True, kw_only=True)
 class DatadisSensorEntityDescription(SensorEntityDescription):
     """Datadis sensor entity description."""
 
-    value_fn: Callable[[DatadisData], float | None]
+    value_fn: Callable[[DatadisData], float | datetime | None]
 
 
 SENSORS: tuple[DatadisSensorEntityDescription, ...] = (
@@ -63,6 +65,20 @@ SENSORS: tuple[DatadisSensorEntityDescription, ...] = (
         icon="mdi:chart-line",
         value_fn=lambda data: data.monthly_peak_power_kw,
     ),
+    DatadisSensorEntityDescription(
+        key="last_successful_update",
+        name="Last Successful Update",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        icon="mdi:clock-check-outline",
+        value_fn=lambda data: data.last_successful_update,
+    ),
+    DatadisSensorEntityDescription(
+        key="next_allowed_query_at",
+        name="Next Allowed Query",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        icon="mdi:clock-outline",
+        value_fn=lambda data: data.next_allowed_query_at,
+    ),
 )
 
 
@@ -97,13 +113,13 @@ class DatadisSensor(CoordinatorEntity[DatadisCoordinator], SensorEntity):
         self._attr_translation_key = description.key
         self._attr_device_info = {
             "identifiers": {("datadis", entry.entry_id)},
-            "name": f"Datadis {entry.data['cups']}",
+            "name": f"Datadis {entry.options.get(CONF_CUPS, entry.data['cups'])}",
             "manufacturer": "Datadis",
             "model": "Private API",
         }
 
     @property
-    def native_value(self) -> float | None:
+    def native_value(self) -> float | datetime | None:
         return self.entity_description.value_fn(self.coordinator.data)
 
     @property
