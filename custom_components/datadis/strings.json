@@ -41,6 +41,14 @@
         "name": "Refresh now"
       }
     },
+    "number": {
+      "update_interval_minutes": {
+        "name": "Update Interval"
+      },
+      "query_days": {
+        "name": "Query Window"
+      }
+    },
     "sensor": {
       "monthly_consumption": {
         "name": "Monthly Consumption"

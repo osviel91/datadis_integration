@@ -25,9 +25,17 @@ _LOGGER = logging.getLogger(__name__)
 class DatadisApiError(Exception):
     """Raised when Datadis API responds with an error."""
 
+    def __init__(self, message: str, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
+
 
 class DatadisAuthError(DatadisApiError):
     """Raised when Datadis auth fails."""
+
+
+class DatadisRateLimitError(DatadisApiError):
+    """Raised when Datadis rate limits requests."""
 
 
 @dataclass(slots=True)
@@ -112,9 +120,14 @@ class DatadisApiClient:
                         if isinstance(candidate, list):
                             return [row for row in candidate if isinstance(row, dict)]
                 return []
+            except DatadisRateLimitError as err:
+                last_err = err
+                if idx == len(attempts):
+                    break
+                continue
             except DatadisApiError as err:
                 last_err = err
-                if "(500)" not in str(err) or idx == len(attempts):
+                if err.status not in {400, 500} or idx == len(attempts):
                     break
                 _LOGGER.debug("Datadis %s fallback %s/%s", url, idx + 1, len(attempts))
 
@@ -137,7 +150,8 @@ class DatadisApiClient:
             if response.status >= 400:
                 text = await response.text()
                 raise DatadisApiError(
-                    f"Token request failed ({response.status}): {text}"
+                    f"Token request failed ({response.status}): {text}",
+                    status=response.status,
                 )
 
             data = await _async_read_json_or_text(response)
@@ -241,9 +255,18 @@ class DatadisApiClient:
             if response.status == 401:
                 _LOGGER.debug("Datadis token expired for %s", url)
                 return {"cod": "401", "message": "Unauthorized"}
+            if response.status == 429:
+                text = await response.text()
+                raise DatadisRateLimitError(
+                    f"Request failed ({response.status}): {text}",
+                    status=response.status,
+                )
             if response.status >= 400:
                 text = await response.text()
-                raise DatadisApiError(f"Request failed ({response.status}): {text}")
+                raise DatadisApiError(
+                    f"Request failed ({response.status}): {text}",
+                    status=response.status,
+                )
             return await _async_read_json_or_text(response)
 
 

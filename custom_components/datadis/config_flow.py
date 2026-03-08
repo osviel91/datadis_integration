@@ -20,6 +20,10 @@ from .const import (
     DEFAULT_QUERY_DAYS,
     DEFAULT_UPDATE_INTERVAL_MINUTES,
     DOMAIN,
+    MAX_QUERY_DAYS,
+    MAX_UPDATE_INTERVAL_MINUTES,
+    MIN_QUERY_DAYS,
+    MIN_UPDATE_INTERVAL_MINUTES,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -33,10 +37,20 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Optional(
             CONF_UPDATE_INTERVAL, default=DEFAULT_UPDATE_INTERVAL_MINUTES
         ): NumberSelector(
-            NumberSelectorConfig(min=15, max=240, step=5, mode="box")
+            NumberSelectorConfig(
+                min=MIN_UPDATE_INTERVAL_MINUTES,
+                max=MAX_UPDATE_INTERVAL_MINUTES,
+                step=5,
+                mode="box",
+            )
         ),
         vol.Optional(CONF_QUERY_DAYS, default=DEFAULT_QUERY_DAYS): NumberSelector(
-            NumberSelectorConfig(min=3, max=90, step=1, mode="box")
+            NumberSelectorConfig(
+                min=MIN_QUERY_DAYS,
+                max=MAX_QUERY_DAYS,
+                step=1,
+                mode="box",
+            )
         ),
     }
 )
@@ -140,7 +154,12 @@ class DatadisOptionsFlow(OptionsFlow):
                         ),
                     ),
                 ): NumberSelector(
-                    NumberSelectorConfig(min=15, max=240, step=5, mode="box")
+                    NumberSelectorConfig(
+                        min=MIN_UPDATE_INTERVAL_MINUTES,
+                        max=MAX_UPDATE_INTERVAL_MINUTES,
+                        step=5,
+                        mode="box",
+                    )
                 ),
                 vol.Optional(
                     CONF_QUERY_DAYS,
@@ -151,7 +170,12 @@ class DatadisOptionsFlow(OptionsFlow):
                         ),
                     ),
                 ): NumberSelector(
-                    NumberSelectorConfig(min=3, max=90, step=1, mode="box")
+                    NumberSelectorConfig(
+                        min=MIN_QUERY_DAYS,
+                        max=MAX_QUERY_DAYS,
+                        step=1,
+                        mode="box",
+                    )
                 ),
             }
         )

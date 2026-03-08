@@ -9,6 +9,7 @@ Custom Home Assistant integration to read electricity data from the Datadis priv
 - Auto polling with configurable interval
 - Configurable query window (days)
 - Manual `Refresh now` button entity
+- Editable controls on the device page for interval and query window
 - Tolerant API request fallbacks for Datadis format differences
 
 ## Entities
@@ -20,6 +21,8 @@ Per configured CUPS, this integration creates:
 - `sensor.latest_hour_consumption` (`kWh`)
 - `sensor.monthly_peak_power` (`kW`)
 - `button.refresh_now`
+- `number.update_interval_minutes`
+- `number.query_days`
 
 ## Installation (manual)
 
@@ -48,6 +51,7 @@ After setup, open the integration `Configure` menu:
 Use one of these methods:
 
 - Open the Datadis device and press `Refresh now`.
+- In the same device Controls area, edit `Update Interval` or `Query Window` and the integration will reload with the new values.
 - Call Home Assistant service `homeassistant.update_entity` on one Datadis sensor entity.
 
 ## Notes about Datadis API behavior

@@ -12,7 +12,12 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 import homeassistant.util.dt as dt_util
 
-from .api import DatadisApiClient, DatadisApiError, DatadisAuthError
+from .api import (
+    DatadisApiClient,
+    DatadisApiError,
+    DatadisAuthError,
+    DatadisRateLimitError,
+)
 from .const import DEFAULT_QUERY_DAYS, DEFAULT_UPDATE_INTERVAL_MINUTES
 
 _LOGGER = logging.getLogger(__name__)
@@ -48,6 +53,10 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
         )
         self.client = client
         self.query_days = query_days
+        self._last_consumption_rows: list[dict[str, Any]] = []
+        self._last_max_power_rows: list[dict[str, Any]] = []
+        self._next_consumption_try: datetime | None = None
+        self._next_max_power_try: datetime | None = None
 
     async def _async_update_data(self) -> DatadisData:
         now = dt_util.now()
@@ -58,25 +67,45 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
         consumption_rows: list[dict[str, Any]] = []
         max_power_rows: list[dict[str, Any]] = []
 
-        try:
-            consumption_rows = await self.client.async_get_consumption_data(
-                start_date=query_start,
-                end_date=now,
-            )
-        except DatadisAuthError as err:
-            raise ConfigEntryAuthFailed from err
-        except DatadisApiError as err:
-            _LOGGER.warning("Datadis consumption fetch failed: %s", err)
+        if self._next_consumption_try and now < self._next_consumption_try:
+            consumption_rows = self._last_consumption_rows
+        else:
+            try:
+                consumption_rows = await self.client.async_get_consumption_data(
+                    start_date=query_start,
+                    end_date=now,
+                )
+                self._last_consumption_rows = consumption_rows
+                self._next_consumption_try = None
+            except DatadisAuthError as err:
+                raise ConfigEntryAuthFailed from err
+            except DatadisRateLimitError as err:
+                _LOGGER.debug("Datadis consumption rate-limited: %s", err)
+                self._next_consumption_try = now + timedelta(hours=24)
+                consumption_rows = self._last_consumption_rows
+            except DatadisApiError as err:
+                _LOGGER.warning("Datadis consumption fetch failed: %s", err)
+                consumption_rows = self._last_consumption_rows
 
-        try:
-            max_power_rows = await self.client.async_get_max_power_data(
-                start_date=query_start,
-                end_date=now,
-            )
-        except DatadisAuthError as err:
-            raise ConfigEntryAuthFailed from err
-        except DatadisApiError as err:
-            _LOGGER.debug("Datadis max power fetch failed: %s", err)
+        if self._next_max_power_try and now < self._next_max_power_try:
+            max_power_rows = self._last_max_power_rows
+        else:
+            try:
+                max_power_rows = await self.client.async_get_max_power_data(
+                    start_date=query_start,
+                    end_date=now,
+                )
+                self._last_max_power_rows = max_power_rows
+                self._next_max_power_try = None
+            except DatadisAuthError as err:
+                raise ConfigEntryAuthFailed from err
+            except DatadisRateLimitError as err:
+                _LOGGER.debug("Datadis max power rate-limited: %s", err)
+                self._next_max_power_try = now + timedelta(hours=24)
+                max_power_rows = self._last_max_power_rows
+            except DatadisApiError as err:
+                _LOGGER.debug("Datadis max power fetch failed: %s", err)
+                max_power_rows = self._last_max_power_rows
 
         return self._build_data(now, consumption_rows, max_power_rows)
 
