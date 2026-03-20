@@ -374,6 +374,16 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
             else None
         )
 
+        resolved_yesterday_consumption = (
+            round(yesterday_total, 3) if has_yesterday_data else None
+        )
+        if (
+            resolved_yesterday_consumption is None
+            and daily_consumption_date is not None
+            and daily_consumption_date == yesterday
+        ):
+            resolved_yesterday_consumption = daily_consumption_kwh
+
         return DatadisData(
             monthly_consumption_kwh=monthly_value,
             monthly_consumption_is_fallback=monthly_fallback,
@@ -381,9 +391,7 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
             data_period_end=period_end,
             daily_consumption_kwh=daily_consumption_kwh,
             daily_consumption_date=daily_consumption_datetime,
-            yesterday_consumption_kwh=round(yesterday_total, 3)
-            if has_yesterday_data
-            else None,
+            yesterday_consumption_kwh=resolved_yesterday_consumption,
             latest_hour_consumption_kwh=round(latest_value, 3)
             if latest_value is not None
             else None,
