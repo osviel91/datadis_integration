@@ -49,14 +49,6 @@ SENSORS: tuple[DatadisSensorEntityDescription, ...] = (
         value_fn=lambda data: data.daily_consumption_kwh,
     ),
     DatadisSensorEntityDescription(
-        key="yesterday_consumption",
-        name="Yesterday Consumption",
-        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-        state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:calendar-today",
-        value_fn=lambda data: data.yesterday_consumption_kwh,
-    ),
-    DatadisSensorEntityDescription(
         key="latest_hour_consumption",
         name="Latest Hour Consumption",
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,

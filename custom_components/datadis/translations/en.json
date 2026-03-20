@@ -79,9 +79,6 @@
       "daily_consumption": {
         "name": "Daily Consumption"
       },
-      "yesterday_consumption": {
-        "name": "Yesterday Consumption"
-      },
       "latest_hour_consumption": {
         "name": "Latest Hour Consumption"
       },
