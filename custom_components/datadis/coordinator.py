@@ -34,6 +34,8 @@ class DatadisData:
     monthly_consumption_is_fallback: bool
     data_period_start: datetime | None
     data_period_end: datetime | None
+    daily_consumption_kwh: float | None
+    daily_consumption_date: datetime | None
     yesterday_consumption_kwh: float | None
     latest_hour_consumption_kwh: float | None
     latest_measurement_at: datetime | None
@@ -300,6 +302,7 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
         yesterday = (now - timedelta(days=1)).date()
         yesterday_total = 0.0
         has_yesterday_data = False
+        daily_totals: dict[datetime.date, float] = {}
 
         latest_value = None
         latest_time = None
@@ -323,6 +326,8 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
                 continue
 
             total_window += value
+            if when:
+                daily_totals[when.date()] = daily_totals.get(when.date(), 0.0) + value
             if when and when.date() >= month_start_date:
                 has_current_month_data = True
                 monthly += value
@@ -357,11 +362,25 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
             monthly_value = round(total_window, 3)
             monthly_fallback = True
 
+        daily_consumption_date = max(daily_totals) if daily_totals else None
+        daily_consumption_kwh = (
+            round(daily_totals[daily_consumption_date], 3)
+            if daily_consumption_date is not None
+            else None
+        )
+        daily_consumption_datetime = (
+            datetime.combine(daily_consumption_date, datetime.min.time())
+            if daily_consumption_date is not None
+            else None
+        )
+
         return DatadisData(
             monthly_consumption_kwh=monthly_value,
             monthly_consumption_is_fallback=monthly_fallback,
             data_period_start=period_start,
             data_period_end=period_end,
+            daily_consumption_kwh=daily_consumption_kwh,
+            daily_consumption_date=daily_consumption_datetime,
             yesterday_consumption_kwh=round(yesterday_total, 3)
             if has_yesterday_data
             else None,

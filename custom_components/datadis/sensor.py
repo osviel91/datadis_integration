@@ -41,6 +41,14 @@ SENSORS: tuple[DatadisSensorEntityDescription, ...] = (
         value_fn=lambda data: data.monthly_consumption_kwh,
     ),
     DatadisSensorEntityDescription(
+        key="daily_consumption",
+        name="Daily Consumption",
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:calendar",
+        value_fn=lambda data: data.daily_consumption_kwh,
+    ),
+    DatadisSensorEntityDescription(
         key="yesterday_consumption",
         name="Yesterday Consumption",
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
@@ -148,5 +156,12 @@ class DatadisSensor(CoordinatorEntity[DatadisCoordinator], SensorEntity):
             if self.coordinator.data.data_period_end is not None:
                 attrs["data_period_end"] = self.coordinator.data.data_period_end.isoformat()
             return attrs
+
+        if self.entity_description.key == "daily_consumption":
+            if self.coordinator.data.daily_consumption_date is None:
+                return None
+            return {
+                "consumption_date": self.coordinator.data.daily_consumption_date.date().isoformat()
+            }
 
         return None

@@ -76,6 +76,9 @@
       "monthly_consumption": {
         "name": "Monthly Consumption"
       },
+      "daily_consumption": {
+        "name": "Daily Consumption"
+      },
       "yesterday_consumption": {
         "name": "Yesterday Consumption"
       },
