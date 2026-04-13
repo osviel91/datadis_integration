@@ -28,6 +28,7 @@ Per configured CUPS:
 
 - Sensors
   - `monthly_consumption` (`kWh`)
+  - `daily_consumption` (`kWh`)
   - `yesterday_consumption` (`kWh`)
   - `latest_hour_consumption` (`kWh`)
   - `monthly_peak_power` (`kW`)
