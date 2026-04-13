@@ -304,7 +304,6 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
         yesterday_total = 0.0
         has_yesterday_data = False
         daily_totals: dict[datetime.date, float] = {}
-        days_with_data_this_month = 0
 
         latest_value = None
         latest_time = None
@@ -333,7 +332,6 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
             if when and when.date() >= month_start_date:
                 has_current_month_data = True
                 monthly += value
-                days_with_data_this_month += 1
             if when and when.date() == yesterday:
                 has_yesterday_data = True
                 yesterday_total += value
@@ -345,6 +343,8 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
                 period_start = when
             if when and (period_end is None or when > period_end):
                 period_end = when
+
+        days_with_data_this_month = sum(1 for day in daily_totals if day >= month_start_date)
 
         peak_power = None
         for row in max_power_rows or []:
