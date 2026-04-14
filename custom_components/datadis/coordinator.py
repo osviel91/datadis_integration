@@ -47,6 +47,7 @@ class DatadisData:
     days_with_data_this_month: int | None
     current_month_daily_average_kwh: float | None
     projected_month_consumption_kwh: float | None
+    highest_daily_consumption_this_month_kwh: float | None
 
 
 class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
@@ -349,6 +350,13 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
 
         days_with_data_this_month = sum(1 for day in daily_totals if day >= month_start_date)
 
+        # Compute highest daily consumption in current month
+        highest_daily_consumption_this_month = None
+        if daily_totals:
+            current_month_totals = [daily_totals[day] for day in daily_totals if day >= month_start_date]
+            if current_month_totals:
+                highest_daily_consumption_this_month = round(max(current_month_totals), 3)
+
         peak_power = None
         for row in max_power_rows or []:
             value = _to_float(
@@ -422,6 +430,7 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
             days_with_data_this_month=days_with_data_value,
             current_month_daily_average_kwh=current_month_daily_average,
             projected_month_consumption_kwh=projected_month_consumption,
+            highest_daily_consumption_this_month_kwh=highest_daily_consumption_this_month,
         )
 
 
