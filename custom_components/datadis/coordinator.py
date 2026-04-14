@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+import calendar
 import logging
 from typing import Any
 
@@ -45,6 +46,7 @@ class DatadisData:
     rate_limit_reached: bool
     days_with_data_this_month: int | None
     current_month_daily_average_kwh: float | None
+    projected_month_consumption_kwh: float | None
 
 
 class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
@@ -395,6 +397,12 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
         if monthly_value is not None and days_with_data_value is not None and days_with_data_value > 0:
             current_month_daily_average = round(monthly_value / days_with_data_value, 3)
 
+        # Compute projected month consumption
+        projected_month_consumption = None
+        if current_month_daily_average is not None:
+            days_in_month = calendar.monthrange(now.year, now.month)[1]
+            projected_month_consumption = round(current_month_daily_average * days_in_month, 3)
+
         return DatadisData(
             monthly_consumption_kwh=monthly_value,
             monthly_consumption_is_fallback=monthly_fallback,
@@ -413,6 +421,7 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
             rate_limit_reached=rate_limit_reached,
             days_with_data_this_month=days_with_data_value,
             current_month_daily_average_kwh=current_month_daily_average,
+            projected_month_consumption_kwh=projected_month_consumption,
         )
 
 
