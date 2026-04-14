@@ -31,6 +31,8 @@ Per configured CUPS:
   - `daily_consumption` (`kWh`)
   - `yesterday_consumption` (`kWh`)
   - `latest_hour_consumption` (`kWh`)
+  - `days_with_data_this_month` (count)
+  - `current_month_daily_average` (`kWh`)
   - `monthly_peak_power` (`kW`)
   - `last_successful_update` (timestamp)
   - `next_allowed_query_at` (timestamp)

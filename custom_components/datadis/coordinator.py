@@ -44,6 +44,7 @@ class DatadisData:
     next_allowed_query_at: datetime | None
     rate_limit_reached: bool
     days_with_data_this_month: int | None
+    current_month_daily_average_kwh: float | None
 
 
 class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
@@ -389,6 +390,11 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
 
         days_with_data_value = days_with_data_this_month if days_with_data_this_month > 0 else None
 
+        # Compute current month daily average
+        current_month_daily_average = None
+        if monthly_value is not None and days_with_data_value is not None and days_with_data_value > 0:
+            current_month_daily_average = round(monthly_value / days_with_data_value, 3)
+
         return DatadisData(
             monthly_consumption_kwh=monthly_value,
             monthly_consumption_is_fallback=monthly_fallback,
@@ -406,6 +412,7 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
             next_allowed_query_at=next_allowed_query_at,
             rate_limit_reached=rate_limit_reached,
             days_with_data_this_month=days_with_data_value,
+            current_month_daily_average_kwh=current_month_daily_average,
         )
 
 

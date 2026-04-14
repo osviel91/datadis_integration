@@ -71,6 +71,15 @@ SENSORS: tuple[DatadisSensorEntityDescription, ...] = (
         value_fn=lambda data: data.days_with_data_this_month,
     ),
     DatadisSensorEntityDescription(
+        key="current_month_daily_average",
+        name="Current Month Daily Average",
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:chart-bar",
+        value_fn=lambda data: data.current_month_daily_average_kwh,
+    ),
+    DatadisSensorEntityDescription(
         key="monthly_peak_power",
         name="Monthly Peak Power",
         native_unit_of_measurement=UnitOfPower.KILO_WATT,
