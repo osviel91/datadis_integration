@@ -1,6 +1,14 @@
 {
   "name": "Datadis",
   "country": "ES",
-  "domains": ["sensor", "button", "number", "text"],
-  "render_readme": true
+  "domains": [
+    "sensor",
+    "button",
+    "number",
+    "text",
+    "binary_sensor"
+  ],
+  "render_readme": true,
+  "iot_class": "cloud_polling",
+  "version": "0.2.0"
 }
