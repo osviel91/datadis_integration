@@ -23,8 +23,12 @@ from .api import (
 from .const import DEFAULT_QUERY_DAYS, DEFAULT_UPDATE_INTERVAL_MINUTES
 
 _LOGGER = logging.getLogger(__name__)
-_STORAGE_VERSION = 1
+_STORAGE_VERSION = 2  # Bumped to invalidate old cache format
 _STORAGE_KEY_PREFIX = "datadis_cache_"
+_CACHE_MAX_AGE_HOURS = 48  # Expire cached data older than 48h
+_BOOTSTRAP_BACKOFF_MINUTES = 5  # Initial backoff for bootstrap
+_BOOTSTRAP_MAX_BACKOFF_MINUTES = 120  # Max backoff after repeated failures
+_TTL_STORAGE_KEY = "_cache_ttl"  # Internal key for cache timestamp
 
 
 @dataclass(slots=True)
@@ -78,6 +82,8 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
         self._last_successful_update: datetime | None = None
         self._forced_refresh = False
         self._cache_loaded = False
+        self._consumption_backoff_count = 0  # Progressive backoff counter
+        self._max_power_backoff_count = 0
         self._store: Store[dict[str, Any]] = Store(
             hass, _STORAGE_VERSION, f"{_STORAGE_KEY_PREFIX}{name}"
         )
@@ -87,6 +93,8 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
         self._forced_refresh = True
         self._next_consumption_try = None
         self._next_max_power_try = None
+        self._consumption_backoff_count = 0
+        self._max_power_backoff_count = 0
         await self.async_request_refresh()
 
     async def _async_update_data(self) -> DatadisData:
@@ -102,129 +110,15 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
         max_power_rows: list[dict[str, Any]] = []
         rate_limit_reached = False
 
-        if (
-            not self._forced_refresh
-            and self._next_consumption_try
-            and now < self._next_consumption_try
-        ):
-            consumption_rows = self._last_consumption_rows
+        # --- Consumption ---
+        consumption_rows, consumption_rate_limited = await self._async_fetch_consumption(now, query_start)
+        if consumption_rate_limited:
             rate_limit_reached = True
-        else:
-            try:
-                consumption_rows = await self.client.async_get_consumption_data(
-                    start_date=query_start,
-                    end_date=now,
-                )
-                self._last_consumption_rows = consumption_rows
-                self._next_consumption_try = None
-                self._last_successful_update = now
-                await self._async_save_cache()
-            except DatadisAuthError as err:
-                raise ConfigEntryAuthFailed from err
-            except DatadisRateLimitError as err:
-                _LOGGER.debug("Datadis consumption rate-limited: %s", err)
-                rate_limit_reached = True
-                if self._last_consumption_rows:
-                    self._next_consumption_try = now + timedelta(
-                        hours=self.rate_limit_cooldown_hours
-                    )
-                    consumption_rows = self._last_consumption_rows
-                else:
-                    # Bootstrap attempt: try previous-month windows that may not be rate-limited.
-                    bootstrap_rows = await self._async_try_bootstrap_consumption(now)
-                    if bootstrap_rows:
-                        consumption_rows = bootstrap_rows
-                        self._last_consumption_rows = bootstrap_rows
-                        self._next_consumption_try = None
-                        self._last_successful_update = now
-                        await self._async_save_cache()
-                    else:
-                        self._next_consumption_try = now + timedelta(
-                            hours=self.rate_limit_cooldown_hours
-                        )
-                        _LOGGER.warning(
-                            "Datadis rate-limited with no cached data yet; retrying after cooldown window"
-                        )
-                        consumption_rows = self._last_consumption_rows
-            except DatadisApiError as err:
-                if err.status == 500:
-                    # Datadis sometimes fails on certain periods. Retry with narrower month windows.
-                    month_windows = _fallback_month_windows(now)
-                    month_err: DatadisApiError | None = None
-                    for start, end in month_windows:
-                        try:
-                            consumption_rows = await self.client.async_get_consumption_data(
-                                start_date=start,
-                                end_date=end,
-                            )
-                            self._last_consumption_rows = consumption_rows
-                            self._next_consumption_try = None
-                            self._last_successful_update = now
-                            await self._async_save_cache()
-                            month_err = None
-                            break
-                        except DatadisApiError as window_err:
-                            month_err = window_err
 
-                    if month_err is not None:
-                        _LOGGER.debug(
-                            "Datadis consumption backend error, keeping last data: %s",
-                            month_err,
-                        )
-                        if self._last_consumption_rows:
-                            self._next_consumption_try = now + timedelta(
-                                hours=self.rate_limit_cooldown_hours
-                            )
-                        else:
-                            self._next_consumption_try = now + timedelta(minutes=15)
-                            if not self.client.distributor_code:
-                                _LOGGER.warning(
-                                    "Datadis backend error with no cached data and empty distributor code; "
-                                    "set Distributor Code in Controls and retrying in 15 minutes"
-                                )
-                            else:
-                                _LOGGER.warning(
-                                    "Datadis backend error with no cached data yet; retrying in 15 minutes"
-                                )
-                        consumption_rows = self._last_consumption_rows
-                else:
-                    _LOGGER.warning("Datadis consumption fetch failed: %s", err)
-                    consumption_rows = self._last_consumption_rows
-
-        if (
-            not self._forced_refresh
-            and self._next_max_power_try
-            and now < self._next_max_power_try
-        ):
-            max_power_rows = self._last_max_power_rows
+        # --- Max Power ---
+        max_power_rows, max_power_rate_limited = await self._async_fetch_max_power(now, query_start)
+        if max_power_rate_limited:
             rate_limit_reached = True
-        else:
-            try:
-                max_power_rows = await self.client.async_get_max_power_data(
-                    start_date=query_start,
-                    end_date=now,
-                )
-                self._last_max_power_rows = max_power_rows
-                self._next_max_power_try = None
-                self._last_successful_update = now
-                await self._async_save_cache()
-            except DatadisAuthError as err:
-                raise ConfigEntryAuthFailed from err
-            except DatadisRateLimitError as err:
-                _LOGGER.debug("Datadis max power rate-limited: %s", err)
-                rate_limit_reached = True
-                if self._last_max_power_rows:
-                    self._next_max_power_try = now + timedelta(
-                        hours=self.rate_limit_cooldown_hours
-                    )
-                else:
-                    self._next_max_power_try = now + timedelta(
-                        hours=self.rate_limit_cooldown_hours
-                    )
-                max_power_rows = self._last_max_power_rows
-            except DatadisApiError as err:
-                _LOGGER.debug("Datadis max power fetch failed: %s", err)
-                max_power_rows = self._last_max_power_rows
 
         self._forced_refresh = False
 
@@ -240,12 +134,188 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
             rate_limit_reached,
         )
 
+    async def _async_fetch_consumption(
+        self, now: datetime, query_start: datetime
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Fetch consumption with exponential backoff on rate limits."""
+        rate_limited = False
+
+        if (
+            not self._forced_refresh
+            and self._next_consumption_try
+            and now < self._next_consumption_try
+        ):
+            return self._last_consumption_rows, True
+
+        try:
+            rows = await self.client.async_get_consumption_data(
+                start_date=query_start,
+                end_date=now,
+            )
+            self._last_consumption_rows = rows
+            self._next_consumption_try = None
+            self._last_successful_update = now
+            self._consumption_backoff_count = 0  # Reset on success
+            await self._async_save_cache()
+            return rows, False
+
+        except DatadisAuthError as err:
+            raise ConfigEntryAuthFailed from err
+
+        except DatadisRateLimitError as err:
+            _LOGGER.debug("Datadis consumption rate-limited: %s", err)
+            rate_limited = True
+            self._consumption_backoff_count += 1
+
+            if self._last_consumption_rows:
+                # Use cached data with progressive backoff
+                self._next_consumption_try = now + self._compute_backoff(
+                    self._consumption_backoff_count
+                )
+                return self._last_consumption_rows, True
+
+            # No cached data - try bootstrap with previous months
+            bootstrap_rows = await self._async_try_bootstrap_consumption(now)
+            if bootstrap_rows:
+                self._last_consumption_rows = bootstrap_rows
+                self._next_consumption_try = None
+                self._last_successful_update = now
+                self._consumption_backoff_count = 0
+                await self._async_save_cache()
+                return bootstrap_rows, False
+
+            self._next_consumption_try = now + self._compute_backoff(
+                self._consumption_backoff_count, max_hours=self.rate_limit_cooldown_hours
+            )
+            _LOGGER.warning(
+                "Datadis rate-limited with no cached data; retry in %s",
+                self._next_consumption_try - now,
+            )
+            return self._last_consumption_rows, True
+
+        except DatadisApiError as err:
+            if err.status == 500:
+                return await self._async_fetch_consumption_with_month_fallback(now, err)
+
+            _LOGGER.warning("Datadis consumption fetch failed: %s", err)
+            return self._last_consumption_rows, rate_limited
+
+    async def _async_fetch_consumption_with_month_fallback(
+        self, now: datetime, original_err: DatadisApiError
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Retry consumption fetch with narrower month windows on backend errors."""
+        month_windows = _fallback_month_windows(now)
+        month_err: DatadisApiError | None = None
+
+        for start, end in month_windows:
+            try:
+                rows = await self.client.async_get_consumption_data(
+                    start_date=start,
+                    end_date=end,
+                )
+                self._last_consumption_rows = rows
+                self._next_consumption_try = None
+                self._last_successful_update = now
+                self._consumption_backoff_count = 0
+                await self._async_save_cache()
+                return rows, False
+            except DatadisApiError as window_err:
+                month_err = window_err
+
+        if month_err is not None:
+            _LOGGER.debug(
+                "Datadis consumption backend error, keeping last data: %s",
+                month_err,
+            )
+            if self._last_consumption_rows:
+                self._next_consumption_try = now + timedelta(
+                    hours=max(1, self.rate_limit_cooldown_hours)
+                )
+            else:
+                self._next_consumption_try = now + timedelta(minutes=15)
+                if not self.client.distributor_code:
+                    _LOGGER.warning(
+                        "Datadis backend error with no cached data and empty distributor code; "
+                        "set Distributor Code in Controls and retrying in 15 minutes"
+                    )
+                else:
+                    _LOGGER.warning(
+                        "Datadis backend error with no cached data yet; retrying in 15 minutes"
+                    )
+        return self._last_consumption_rows, False
+
+    async def _async_fetch_max_power(
+        self, now: datetime, query_start: datetime
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Fetch max power with exponential backoff on rate limits."""
+        rate_limited = False
+
+        if (
+            not self._forced_refresh
+            and self._next_max_power_try
+            and now < self._next_max_power_try
+        ):
+            return self._last_max_power_rows, True
+
+        try:
+            rows = await self.client.async_get_max_power_data(
+                start_date=query_start,
+                end_date=now,
+            )
+            self._last_max_power_rows = rows
+            self._next_max_power_try = None
+            self._last_successful_update = now
+            self._max_power_backoff_count = 0
+            await self._async_save_cache()
+            return rows, False
+
+        except DatadisAuthError as err:
+            raise ConfigEntryAuthFailed from err
+
+        except DatadisRateLimitError as err:
+            _LOGGER.debug("Datadis max power rate-limited: %s", err)
+            rate_limited = True
+            self._max_power_backoff_count += 1
+            self._next_max_power_try = now + self._compute_backoff(
+                self._max_power_backoff_count, max_hours=self.rate_limit_cooldown_hours
+            )
+            return self._last_max_power_rows, True
+
+        except DatadisApiError as err:
+            _LOGGER.debug("Datadis max power fetch failed: %s", err)
+            return self._last_max_power_rows, rate_limited
+
+    def _compute_backoff(
+        self, attempt_count: int, max_hours: int | None = None
+    ) -> timedelta:
+        """Compute progressive backoff delay. Starts small, grows with retries."""
+        minutes = _BOOTSTRAP_BACKOFF_MINUTES * (2 ** (attempt_count - 1))
+        minutes = min(minutes, _BOOTSTRAP_MAX_BACKOFF_MINUTES)
+
+        if max_hours is not None:
+            minutes = min(minutes, max_hours * 60)
+
+        return timedelta(minutes=minutes)
+
     async def _async_load_cache(self) -> None:
-        """Load last known data from storage."""
+        """Load last known data from storage, respecting TTL."""
         self._cache_loaded = True
         cached = await self._store.async_load()
         if not cached:
             return
+
+        # Check cache TTL
+        cache_timestamp = cached.get(_TTL_STORAGE_KEY)
+        if cache_timestamp:
+            try:
+                cached_time = _parse_datetime(cache_timestamp)
+                if cached_time and (dt_util.now() - cached_time) > timedelta(
+                    hours=_CACHE_MAX_AGE_HOURS
+                ):
+                    _LOGGER.debug("Datadis cache expired, ignoring stale data")
+                    return
+            except (ValueError, TypeError):
+                pass  # Corrupt timestamp, still try to use data
 
         consumption_rows = cached.get("consumption_rows")
         max_power_rows = cached.get("max_power_rows")
@@ -256,17 +326,20 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
                 row for row in consumption_rows if isinstance(row, dict)
             ]
         if isinstance(max_power_rows, list):
-            self._last_max_power_rows = [row for row in max_power_rows if isinstance(row, dict)]
+            self._last_max_power_rows = [
+                row for row in max_power_rows if isinstance(row, dict)
+            ]
         if isinstance(last_successful_update, str):
             parsed = _parse_datetime(last_successful_update)
             if parsed:
                 self._last_successful_update = parsed
 
     async def _async_save_cache(self) -> None:
-        """Persist last known data to storage."""
+        """Persist last known data to storage with TTL timestamp."""
         payload: dict[str, Any] = {
             "consumption_rows": self._last_consumption_rows,
             "max_power_rows": self._last_max_power_rows,
+            _TTL_STORAGE_KEY: dt_util.now().isoformat(),
             "last_successful_update": self._last_successful_update.isoformat()
             if self._last_successful_update
             else None,
@@ -348,14 +421,22 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
             if when and (period_end is None or when > period_end):
                 period_end = when
 
-        days_with_data_this_month = sum(1 for day in daily_totals if day >= month_start_date)
+        days_with_data_this_month = sum(
+            1 for day in daily_totals if day >= month_start_date
+        )
 
         # Compute highest daily consumption in current month
         highest_daily_consumption_this_month = None
         if daily_totals:
-            current_month_totals = [daily_totals[day] for day in daily_totals if day >= month_start_date]
+            current_month_totals = [
+                daily_totals[day]
+                for day in daily_totals
+                if day >= month_start_date
+            ]
             if current_month_totals:
-                highest_daily_consumption_this_month = round(max(current_month_totals), 3)
+                highest_daily_consumption_this_month = round(
+                    max(current_month_totals), 3
+                )
 
         peak_power = None
         for row in max_power_rows or []:
@@ -398,18 +479,28 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
         ):
             resolved_yesterday_consumption = daily_consumption_kwh
 
-        days_with_data_value = days_with_data_this_month if days_with_data_this_month > 0 else None
+        days_with_data_value = (
+            days_with_data_this_month if days_with_data_this_month > 0 else None
+        )
 
         # Compute current month daily average
         current_month_daily_average = None
-        if monthly_value is not None and days_with_data_value is not None and days_with_data_value > 0:
-            current_month_daily_average = round(monthly_value / days_with_data_value, 3)
+        if (
+            monthly_value is not None
+            and days_with_data_value is not None
+            and days_with_data_value > 0
+        ):
+            current_month_daily_average = round(
+                monthly_value / days_with_data_value, 3
+            )
 
         # Compute projected month consumption
         projected_month_consumption = None
         if current_month_daily_average is not None:
             days_in_month = calendar.monthrange(now.year, now.month)[1]
-            projected_month_consumption = round(current_month_daily_average * days_in_month, 3)
+            projected_month_consumption = round(
+                current_month_daily_average * days_in_month, 3
+            )
 
         return DatadisData(
             monthly_consumption_kwh=monthly_value,
