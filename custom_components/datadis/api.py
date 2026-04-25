@@ -25,6 +25,8 @@ _LOGGER = logging.getLogger(__name__)
 REQUEST_TIMEOUT_SECONDS = 12
 MAX_FALLBACK_ATTEMPTS = 16
 SUPPLY_TIMEOUT_SECONDS = 35
+TOKEN_TIMEOUT_SECONDS = 20  # Token requests can be slower
+MAX_RETRY_BACKOFF_SECONDS = 300  # 5 min max backoff
 
 
 class DatadisApiError(Exception):
@@ -70,6 +72,7 @@ class DatadisApiClient:
         self._point_type = point_type
         self._access_token: str | None = None
         self._supply_resolved = False
+        self._token_failures = 0  # Track consecutive token failures
 
     @property
     def distributor_code(self) -> str:
@@ -168,12 +171,14 @@ class DatadisApiClient:
 
         try:
             async with self._session.post(
-                TOKEN_URL, data=payload, timeout=REQUEST_TIMEOUT_SECONDS
+                TOKEN_URL, data=payload, timeout=TOKEN_TIMEOUT_SECONDS
             ) as response:
                 if response.status == 401:
+                    self._token_failures += 1
                     raise DatadisAuthError("Authentication failed")
                 if response.status >= 400:
                     text = await response.text()
+                    self._token_failures += 1
                     raise DatadisApiError(
                         f"Token request failed ({response.status}): {text}",
                         status=response.status,
@@ -181,9 +186,13 @@ class DatadisApiClient:
 
                 data = await _async_read_json_or_text(response)
         except asyncio.TimeoutError as err:
+            self._token_failures += 1
             raise DatadisApiError("Token request timed out") from err
         except aiohttp.ClientError as err:
+            self._token_failures += 1
             raise DatadisApiError(f"Token request connection error: {err}") from err
+
+        self._token_failures = 0  # Reset on success
 
         access_token = None
         if isinstance(data, dict):
@@ -197,6 +206,7 @@ class DatadisApiClient:
             access_token = data
 
         if not access_token:
+            self._token_failures += 1
             raise DatadisAuthError("Datadis response did not include accessToken")
 
         self._access_token = access_token
@@ -299,8 +309,12 @@ class DatadisApiClient:
         headers = {
             "Authorization": f"Bearer {token}",
             "Accept": "application/json",
-            "Accept-Encoding": "identity",
         }
+        # Only force identity encoding for supply resolution (known gzip issues)
+        # Use gzip for data queries for better performance
+        if SUPPLIES_URL in url:
+            headers["Accept-Encoding"] = "identity"
+
         request = self._session.get if method.lower() == "get" else self._session.post
         params = body if method.lower() == "get" else None
         data = body if method.lower() != "get" else None
@@ -422,6 +436,18 @@ def _build_query_param_attempts(
         ]
     )
 
+    # Try previous month as well (helps with Datadis 24h restriction)
+    for month_offset in (0, -1, -2):
+        for candidate_point_type in (point_type, POINT_TYPE_SUPPLY_POINT, "1"):
+            base_variants.append(
+                {
+                    "start_date": _shift_month(start_date, month_offset).strftime("%Y/%m"),
+                    "end_date": _shift_month(end_date, month_offset).strftime("%Y/%m"),
+                    "measurement_type": MEASUREMENT_TYPE_ELECTRICITY,
+                    "point_type": candidate_point_type,
+                },
+            )
+
     distributor_candidates = _distributor_candidates(distributor_code)
 
     attempts: list[dict[str, Any]] = []
@@ -441,6 +467,22 @@ def _build_query_param_attempts(
                 attempts.append(candidate)
 
     return attempts
+
+
+def _shift_month(dt: datetime, offset: int) -> datetime:
+    """Shift datetime by N months, clamping to valid days."""
+    month = dt.month + offset
+    year = dt.year
+    while month > 12:
+        month -= 12
+        year += 1
+    while month < 1:
+        month += 12
+        year -= 1
+    import calendar
+    max_day = calendar.monthrange(year, month)[1]
+    day = min(dt.day, max_day)
+    return dt.replace(year=year, month=month, day=day)
 
 
 def _distributor_candidates(code: str) -> list[str]:
