@@ -19,7 +19,8 @@
     "error": {
       "invalid_auth": "Invalid authentication",
       "cannot_connect": "Cannot connect",
-      "unknown": "Unexpected error"
+      "unknown": "Unexpected error",
+      "invalid_cups_format": "Invalid CUPS format. Must start with ES followed by 20 alphanumeric characters"
     },
     "abort": {
       "already_configured": "This CUPS is already configured"
