@@ -23,7 +23,7 @@ from .api import (
 from .const import DEFAULT_QUERY_DAYS, DEFAULT_UPDATE_INTERVAL_MINUTES
 
 _LOGGER = logging.getLogger(__name__)
-_STORAGE_VERSION = 2  # Bumped to invalidate old cache format
+_STORAGE_VERSION = 1  # Keep at 1 to avoid migration issues
 _STORAGE_KEY_PREFIX = "datadis_cache_"
 _CACHE_MAX_AGE_HOURS = 48  # Expire cached data older than 48h
 _BOOTSTRAP_BACKOFF_MINUTES = 5  # Initial backoff for bootstrap
