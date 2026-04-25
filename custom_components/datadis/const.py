@@ -11,6 +11,7 @@ CONF_UPDATE_INTERVAL = "update_interval_minutes"
 CONF_QUERY_DAYS = "query_days"
 CONF_RATE_LIMIT_COOLDOWN_HOURS = "rate_limit_cooldown_hours"
 CONF_POINT_TYPE = "point_type"
+CONF_ENERGY_COST_PER_KWH = "energy_cost_per_kwh"  # Optional future use
 
 DEFAULT_DISTRIBUTOR_CODE = ""
 DEFAULT_UPDATE_INTERVAL_MINUTES = 60
@@ -34,3 +35,7 @@ CONTRACT_DETAIL_URL = f"{API_PRIVATE_BASE}/get-contract-detail"
 
 MEASUREMENT_TYPE_ELECTRICITY = "0"
 POINT_TYPE_SUPPLY_POINT = "5"
+
+# CUPS format validation (Spanish standard: ES-XXXXX XXXXXXXXXXXXXX)
+# Total 22 chars: ES + 20 alphanumeric
+CUPS_PATTERN = r"^ES[0-9A-Z]{20}$"
