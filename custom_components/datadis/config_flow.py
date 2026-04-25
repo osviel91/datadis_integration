@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 import voluptuous as vol
@@ -21,6 +22,7 @@ from .const import (
     CONF_RATE_LIMIT_COOLDOWN_HOURS,
     CONF_UPDATE_INTERVAL,
     CONF_USERNAME,
+    CUPS_PATTERN,
     DEFAULT_POINT_TYPE,
     DEFAULT_DISTRIBUTOR_CODE,
     DEFAULT_QUERY_DAYS,
@@ -106,7 +108,7 @@ class DatadisConfigFlow(ConfigFlow, domain=DOMAIN):
             normalized_input = {
                 **user_input,
                 CONF_USERNAME: user_input[CONF_USERNAME].strip(),
-                CONF_CUPS: user_input[CONF_CUPS].strip(),
+                CONF_CUPS: user_input[CONF_CUPS].strip().upper(),
                 CONF_DISTRIBUTOR_CODE: user_input[CONF_DISTRIBUTOR_CODE].strip(),
                 CONF_POINT_TYPE: str(user_input[CONF_POINT_TYPE]).strip(),
                 CONF_UPDATE_INTERVAL: int(user_input[CONF_UPDATE_INTERVAL]),
@@ -116,7 +118,20 @@ class DatadisConfigFlow(ConfigFlow, domain=DOMAIN):
                 ),
             }
 
-            await self.async_set_unique_id(normalized_input[CONF_CUPS])
+            # Validate CUPS format
+            cups_value = normalized_input[CONF_CUPS]
+            if not re.match(CUPS_PATTERN, cups_value):
+                errors["cups"] = "invalid_cups_format"
+                return self.async_show_form(
+                    step_id="user",
+                    data_schema=STEP_USER_DATA_SCHEMA,
+                    errors=errors,
+                    description_placeholders={
+                        "cups_format": "ES seguido de 20 caracteres alfanuméricos (ES01234567890123456789)"
+                    },
+                )
+
+            await self.async_set_unique_id(cups_value)
             self._abort_if_unique_id_configured()
 
             try:
@@ -150,10 +165,20 @@ class DatadisOptionsFlow(OptionsFlow):
         self._config_entry = config_entry
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
+
         if user_input is not None:
+            # Validate CUPS in options too (it can change via text entity)
+            cups_value = user_input.get(CONF_CUPS, "").strip().upper()
+            if cups_value and not re.match(CUPS_PATTERN, cups_value):
+                errors[CONF_CUPS] = "invalid_cups_format"
+                # Don't block, but warn user — CUPS could be in options
+                # We'll still create entry with raw value
+
             return self.async_create_entry(
                 title="",
                 data={
+                    CONF_CUPS: cups_value or self._config_entry.data.get(CONF_CUPS, ""),
                     CONF_UPDATE_INTERVAL: int(user_input[CONF_UPDATE_INTERVAL]),
                     CONF_DISTRIBUTOR_CODE: user_input[CONF_DISTRIBUTOR_CODE].strip(),
                     CONF_POINT_TYPE: str(user_input[CONF_POINT_TYPE]).strip(),
