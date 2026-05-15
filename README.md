@@ -93,6 +93,14 @@ Recommended defaults:
 - `Update Interval`: `1440` minutes
 - `Rate Limit Cooldown`: `24` hours
 
+## Daily consumption sensor semantics
+
+- `daily_consumption` = the latest daily value currently available from Datadis.
+  - It includes the `consumption_date` attribute so dashboards can see which day the value belongs to.
+  - Datadis may publish with delay, so this sensor can legitimately show an older day until fresher data arrives.
+- `yesterday_consumption` = the value specifically for yesterday, when available.
+  - Prefer this sensor for day-by-day dashboard cards and charts when you want each bar to represent yesterday only.
+
 ## Development
 
 ```bash

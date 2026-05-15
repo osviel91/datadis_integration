@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Callable
 
 from homeassistant.components.sensor import (
@@ -17,7 +17,6 @@ from homeassistant.const import UnitOfEnergy, UnitOfPower
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-import homeassistant.util.dt as dt_util
 
 from . import DatadisConfigEntry
 from .coordinator import DatadisCoordinator, DatadisData
@@ -164,14 +163,6 @@ class DatadisSensor(CoordinatorEntity[DatadisCoordinator], SensorEntity):
     def native_value(self) -> float | datetime | None:
         if self.coordinator.data is None:
             return None
-        if self.entity_description.key == "daily_consumption":
-            consumption_date = self.coordinator.data.daily_consumption_date
-            if consumption_date is None:
-                return None
-
-            # Avoid plotting the last known day across later recorder dates.
-            if consumption_date.date() < (dt_util.now().date() - timedelta(days=1)):
-                return None
         return self.entity_description.value_fn(self.coordinator.data)
 
     @property
