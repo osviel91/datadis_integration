@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import logging
 from typing import Any
@@ -27,6 +27,7 @@ MAX_FALLBACK_ATTEMPTS = 16
 SUPPLY_TIMEOUT_SECONDS = 35
 TOKEN_TIMEOUT_SECONDS = 20  # Token requests can be slower
 MAX_RETRY_BACKOFF_SECONDS = 300  # 5 min max backoff
+FRESH_DATA_MAX_LAG = timedelta(days=7)
 
 
 class DatadisApiError(Exception):
@@ -124,6 +125,8 @@ class DatadisApiClient:
             point_type=self._point_type,
         )
         last_err: DatadisApiError | None = None
+        best_rows: list[dict[str, Any]] = []
+        best_latest: datetime | None = None
 
         methods = ("get", "post")
         for method in methods:
@@ -133,13 +136,15 @@ class DatadisApiClient:
             for idx, params in enumerate(attempts[:MAX_FALLBACK_ATTEMPTS], start=1):
                 try:
                     data = await self._async_request(url, params, method=method)
-                    if isinstance(data, list):
-                        return [row for row in data if isinstance(row, dict)]
-                    if isinstance(data, dict):
-                        for key in ("data", "items", "result"):
-                            candidate = data.get(key)
-                            if isinstance(candidate, list):
-                                return [row for row in candidate if isinstance(row, dict)]
+                    rows = _extract_datadis_rows(data)
+                    latest = _latest_row_datetime(rows)
+                    if _is_recent_enough(latest, end_date):
+                        return rows
+                    if rows and (best_latest is None or (latest and latest > best_latest)):
+                        best_rows = rows
+                        best_latest = latest
+                    if rows:
+                        continue
                     return []
                 except DatadisRateLimitError as err:
                     last_err = err
@@ -156,6 +161,13 @@ class DatadisApiClient:
                         len(attempts),
                     )
 
+        if best_rows:
+            _LOGGER.warning(
+                "Datadis returned only stale/partial rows up to %s for %s",
+                best_latest.isoformat() if best_latest else "unknown",
+                url,
+            )
+            return best_rows
         if last_err is not None:
             raise last_err
         return []
@@ -369,6 +381,59 @@ def _extract_supply_rows(supplies_data: Any) -> list[dict[str, Any]] | None:
             candidate = supplies_data.get(key)
             if isinstance(candidate, list):
                 return [row for row in candidate if isinstance(row, dict)]
+    return None
+
+
+def _extract_datadis_rows(data: Any) -> list[dict[str, Any]]:
+    """Normalize Datadis endpoint wrapper variants into row dicts."""
+    if isinstance(data, list):
+        return [row for row in data if isinstance(row, dict)]
+    if isinstance(data, dict):
+        for key in ("data", "items", "result"):
+            candidate = data.get(key)
+            if isinstance(candidate, list):
+                return [row for row in candidate if isinstance(row, dict)]
+    return []
+
+
+def _latest_row_datetime(rows: list[dict[str, Any]]) -> datetime | None:
+    latest = None
+    for row in rows:
+        for key in ("datetime", "date", "timestamp", "hour"):
+            value = row.get(key)
+            if not value:
+                continue
+            parsed = _parse_datetime(value)
+            if parsed is not None and (latest is None or parsed > latest):
+                latest = parsed
+            break
+    return latest
+
+
+def _is_recent_enough(latest: datetime | None, end_date: datetime) -> bool:
+    """Datadis data is delayed, but successful polls should still be within a reasonable lag."""
+    if latest is None:
+        return False
+    return latest.date() >= (end_date - FRESH_DATA_MAX_LAG).date()
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if not value:
+        return None
+    value_str = str(value)
+    for parser in (
+        datetime.fromisoformat,
+        lambda v: datetime.strptime(v, "%Y/%m/%d %H:%M"),
+        lambda v: datetime.strptime(v, "%Y-%m-%d %H:%M:%S"),
+        lambda v: datetime.strptime(v, "%Y-%m-%dT%H:%M:%S"),
+        lambda v: datetime.strptime(v, "%Y/%m/%d"),
+    ):
+        try:
+            return parser(value_str)
+        except ValueError:
+            continue
     return None
 
 

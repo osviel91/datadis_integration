@@ -174,14 +174,34 @@ class DatadisSensor(CoordinatorEntity[DatadisCoordinator], SensorEntity):
             measured_at = self.coordinator.data.latest_measurement_at
             if measured_at is None:
                 return None
-            return {"measurement_at": measured_at.isoformat()}
+            attrs = {"measurement_at": measured_at.isoformat()}
+            if self.coordinator.data.latest_consumption_age_days is not None:
+                attrs["data_age_days"] = str(
+                    self.coordinator.data.latest_consumption_age_days
+                )
+            return attrs
 
         if self.entity_description.key == "monthly_consumption":
             attrs: dict[str, str] = {
                 "is_fallback_period": str(
                     self.coordinator.data.monthly_consumption_is_fallback
-                ).lower()
+                ).lower(),
+                "represents_current_month": str(
+                    self.coordinator.data.monthly_consumption_kwh is not None
+                ).lower(),
             }
+            if self.coordinator.data.available_period_consumption_kwh is not None:
+                attrs["available_period_consumption_kwh"] = str(
+                    self.coordinator.data.available_period_consumption_kwh
+                )
+            if self.coordinator.data.latest_measurement_at is not None:
+                attrs["latest_measurement_at"] = (
+                    self.coordinator.data.latest_measurement_at.isoformat()
+                )
+            if self.coordinator.data.latest_consumption_age_days is not None:
+                attrs["data_age_days"] = str(
+                    self.coordinator.data.latest_consumption_age_days
+                )
             if self.coordinator.data.data_period_start is not None:
                 attrs["data_period_start"] = (
                     self.coordinator.data.data_period_start.isoformat()
@@ -193,8 +213,13 @@ class DatadisSensor(CoordinatorEntity[DatadisCoordinator], SensorEntity):
         if self.entity_description.key == "daily_consumption":
             if self.coordinator.data.daily_consumption_date is None:
                 return None
-            return {
+            attrs = {
                 "consumption_date": self.coordinator.data.daily_consumption_date.date().isoformat()
             }
+            if self.coordinator.data.latest_consumption_age_days is not None:
+                attrs["data_age_days"] = str(
+                    self.coordinator.data.latest_consumption_age_days
+                )
+            return attrs
 
         return None

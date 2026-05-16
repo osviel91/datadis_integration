@@ -29,6 +29,7 @@ _CACHE_MAX_AGE_HOURS = 48  # Expire cached data older than 48h
 _BOOTSTRAP_BACKOFF_MINUTES = 5  # Initial backoff for bootstrap
 _BOOTSTRAP_MAX_BACKOFF_MINUTES = 120  # Max backoff after repeated failures
 _TTL_STORAGE_KEY = "_cache_ttl"  # Internal key for cache timestamp
+_RECENT_DATA_MAX_AGE_DAYS = 7  # Datadis should not lag multiple weeks on success
 
 
 @dataclass(slots=True)
@@ -37,6 +38,7 @@ class DatadisData:
 
     monthly_consumption_kwh: float | None
     monthly_consumption_is_fallback: bool
+    available_period_consumption_kwh: float | None
     data_period_start: datetime | None
     data_period_end: datetime | None
     daily_consumption_kwh: float | None
@@ -44,6 +46,7 @@ class DatadisData:
     yesterday_consumption_kwh: float | None
     latest_hour_consumption_kwh: float | None
     latest_measurement_at: datetime | None
+    latest_consumption_age_days: int | None
     monthly_peak_power_kw: float | None
     last_successful_update: datetime | None
     next_allowed_query_at: datetime | None
@@ -152,6 +155,15 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
                 start_date=query_start,
                 end_date=now,
             )
+
+            if self._rows_are_stale(rows, now):
+                latest = _latest_row_datetime(rows)
+                _LOGGER.warning(
+                    "Datadis returned stale consumption rows (latest=%s); keeping cached freshness state",
+                    latest.isoformat() if latest else "unknown",
+                )
+                return self._prefer_fresher_rows(self._last_consumption_rows, rows), False
+
             self._last_consumption_rows = rows
             self._next_consumption_try = None
             self._last_successful_update = now
@@ -213,6 +225,13 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
                     start_date=start,
                     end_date=end,
                 )
+                if self._rows_are_stale(rows, now):
+                    latest = _latest_row_datetime(rows)
+                    _LOGGER.warning(
+                        "Datadis month fallback returned stale rows (latest=%s); trying other windows",
+                        latest.isoformat() if latest else "unknown",
+                    )
+                    continue
                 self._last_consumption_rows = rows
                 self._next_consumption_try = None
                 self._last_successful_update = now
@@ -296,6 +315,26 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
             minutes = min(minutes, max_hours * 60)
 
         return timedelta(minutes=minutes)
+
+    def _rows_are_stale(self, rows: list[dict[str, Any]], now: datetime) -> bool:
+        """Return True when Datadis rows are far older than the current polling window expects."""
+        latest = _latest_row_datetime(rows)
+        if latest is None:
+            return False
+        return (now.date() - latest.date()).days > _RECENT_DATA_MAX_AGE_DAYS
+
+    def _prefer_fresher_rows(
+        self, cached_rows: list[dict[str, Any]], incoming_rows: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Keep the dataset with the freshest timestamp, preferring cached rows on ties."""
+        cached_latest = _latest_row_datetime(cached_rows)
+        incoming_latest = _latest_row_datetime(incoming_rows)
+
+        if incoming_latest is None:
+            return cached_rows
+        if cached_latest is None or incoming_latest > cached_latest:
+            return incoming_rows
+        return cached_rows
 
     async def _async_load_cache(self) -> None:
         """Load last known data from storage, respecting TTL."""
@@ -451,11 +490,9 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
             if peak_power is None or value > peak_power:
                 peak_power = value
 
+        available_period_consumption = round(total_window, 3) if total_window > 0 else None
         monthly_value = round(monthly, 3) if has_current_month_data else None
-        monthly_fallback = False
-        if monthly_value is None and total_window > 0:
-            monthly_value = round(total_window, 3)
-            monthly_fallback = True
+        monthly_fallback = monthly_value is None and available_period_consumption is not None
 
         daily_consumption_date = max(daily_totals) if daily_totals else None
         daily_consumption_kwh = (
@@ -502,9 +539,14 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
                 current_month_daily_average * days_in_month, 3
             )
 
+        latest_consumption_age_days = None
+        if latest_time is not None:
+            latest_consumption_age_days = (now.date() - latest_time.date()).days
+
         return DatadisData(
             monthly_consumption_kwh=monthly_value,
             monthly_consumption_is_fallback=monthly_fallback,
+            available_period_consumption_kwh=available_period_consumption,
             data_period_start=period_start,
             data_period_end=period_end,
             daily_consumption_kwh=daily_consumption_kwh,
@@ -514,6 +556,7 @@ class DatadisCoordinator(DataUpdateCoordinator[DatadisData]):
             if latest_value is not None
             else None,
             latest_measurement_at=latest_time,
+            latest_consumption_age_days=latest_consumption_age_days,
             monthly_peak_power_kw=round(peak_power, 3) if peak_power is not None else None,
             last_successful_update=last_successful_update,
             next_allowed_query_at=next_allowed_query_at,
@@ -561,6 +604,20 @@ def _parse_datetime(value: Any) -> datetime | None:
             continue
 
     return None
+
+
+def _latest_row_datetime(rows: list[dict[str, Any]]) -> datetime | None:
+    latest = None
+    for row in rows or []:
+        when = _parse_datetime(
+            row.get("datetime")
+            or row.get("date")
+            or row.get("timestamp")
+            or row.get("hour")
+        )
+        if when and (latest is None or when > latest):
+            latest = when
+    return latest
 
 
 def _earliest_datetime(*values: datetime | None) -> datetime | None:
