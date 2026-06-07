@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+import gzip
 import json
 import logging
 from typing import Any
@@ -181,15 +182,24 @@ class DatadisApiClient:
             "password": self._credentials.password,
         }
 
+        headers = {
+            "Accept": "application/json",
+            "Accept-Encoding": "identity",
+        }
+
         try:
             async with self._session.post(
-                TOKEN_URL, data=payload, timeout=TOKEN_TIMEOUT_SECONDS
+                TOKEN_URL,
+                data=payload,
+                headers=headers,
+                timeout=TOKEN_TIMEOUT_SECONDS,
+                auto_decompress=False,
             ) as response:
                 if response.status == 401:
                     self._token_failures += 1
                     raise DatadisAuthError("Authentication failed")
                 if response.status >= 400:
-                    text = await response.text()
+                    text = await _async_read_response_text(response)
                     self._token_failures += 1
                     raise DatadisApiError(
                         f"Token request failed ({response.status}): {text}",
@@ -321,11 +331,8 @@ class DatadisApiClient:
         headers = {
             "Authorization": f"Bearer {token}",
             "Accept": "application/json",
+            "Accept-Encoding": "identity",
         }
-        # Only force identity encoding for supply resolution (known gzip issues)
-        # Use gzip for data queries for better performance
-        if SUPPLIES_URL in url:
-            headers["Accept-Encoding"] = "identity"
 
         request = self._session.get if method.lower() == "get" else self._session.post
         params = body if method.lower() == "get" else None
@@ -338,18 +345,19 @@ class DatadisApiClient:
                 data=data,
                 headers=headers,
                 timeout=timeout_seconds,
+                auto_decompress=False,
             ) as response:
                 if response.status == 401:
                     _LOGGER.debug("Datadis token expired for %s", url)
                     return {"cod": "401", "message": "Unauthorized"}
                 if response.status == 429:
-                    text = await response.text()
+                    text = await _async_read_response_text(response)
                     raise DatadisRateLimitError(
                         f"Request failed ({response.status}): {text}",
                         status=response.status,
                     )
                 if response.status >= 400:
-                    text = await response.text()
+                    text = await _async_read_response_text(response)
                     raise DatadisApiError(
                         f"Request failed ({response.status}): {text}",
                         status=response.status,
@@ -362,14 +370,33 @@ class DatadisApiClient:
 
 
 async def _async_read_json_or_text(response) -> Any:
-    """Read API response as JSON when possible, fallback to text."""
-    text = await response.text()
+    """Read API response as JSON when possible, fallback to text.
+
+    Some Datadis endpoints may send ``Content-Encoding: gzip`` with a plain
+    response body. aiohttp's automatic decompression raises before callers can
+    inspect that body, so requests use ``auto_decompress=False`` and this helper
+    only decompresses when the bytes are actually gzip.
+    """
+    text = await _async_read_response_text(response)
     if not text:
         return {}
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         return text
+
+
+async def _async_read_response_text(response) -> str:
+    """Read response bytes defensively, handling broken gzip headers."""
+    raw = await response.read()
+    if not raw:
+        return ""
+
+    content_encoding = response.headers.get("Content-Encoding", "").lower()
+    if "gzip" in content_encoding and raw.startswith(b"\x1f\x8b"):
+        raw = gzip.decompress(raw)
+
+    return raw.decode("utf-8", errors="replace").strip()
 
 
 def _extract_supply_rows(supplies_data: Any) -> list[dict[str, Any]] | None:
